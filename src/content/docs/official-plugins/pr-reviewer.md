@@ -113,16 +113,24 @@ Add one (or both) of the execution blocks below to your `rules.json` so the Xian
 
 ### When does the agent trigger?
 
-All triggers require the agent (`xianix-agent`) to be listed as a reviewer on the pull request. The review runs when **any** of the following scenarios match (OR logic across `match-any` entries):
+The PR Reviewer is **tag-driven**. It runs when the `ai-dlc/pr/pr-review` label (GitHub) or tag (Azure DevOps) is present on a pull request and one of the following happens (OR logic across `match-any` entries):
+
+| Scenario | What it covers |
+|---|---|
+| Tag newly applied to a PR | A human (or another rule) adds `ai-dlc/pr/pr-review` to an open PR |
+| PR opened with the tag already present | A PR is created with the tag included from the start |
+| New commits pushed to a tagged PR | The PR branch is updated while the tag is still on the PR |
+
+There is no longer any reviewer-assignment based trigger. The label or tag is the single source of truth for "review this PR."
 
 | Platform | Scenario | Webhook event | Filter rule |
 |---|---|---|---|
-| GitHub | PR opened with agent as reviewer | `pull_request` | `action==opened` and `xianix-agent` in `requested_reviewers` |
-| GitHub | New commits pushed to PR branch | `pull_request` | `action==synchronize` and `xianix-agent` in `requested_reviewers` |
-| GitHub | Agent requested as reviewer | `pull_request` | `action==review_requested` and `requested_reviewer.login` is `xianix-agent` |
-| Azure DevOps | PR created with agent as reviewer | `git.pullrequest.created` | `xianix-agent` in `reviewers` |
-| Azure DevOps | Source branch updated | `git.pullrequest.updated` | `xianix-agent` in `reviewers` and message contains "updated the source branch" |
-| Azure DevOps | Agent added as reviewer | `git.pullrequest.updated` | `xianix-agent` in `reviewers` and message contains "as a reviewer" |
+| GitHub | Tag newly applied | `pull_request` | `action==labeled` and the just-added `label.name=='ai-dlc/pr/pr-review'` |
+| GitHub | PR opened with tag | `pull_request` | `action==opened` and `ai-dlc/pr/pr-review` is in `pull_request.labels` |
+| GitHub | New commits to tagged PR | `pull_request` | `action==synchronize` and `ai-dlc/pr/pr-review` is in `pull_request.labels` |
+| Azure DevOps | Tag newly applied | `git.pullrequest.updated` | `message.text` contains `tagged the pull request` and `ai-dlc/pr/pr-review` is in `resource.labels` |
+| Azure DevOps | PR created with tag | `git.pullrequest.created` | `ai-dlc/pr/pr-review` is in `resource.labels` |
+| Azure DevOps | New commits to tagged PR | `git.pullrequest.updated` | `message.text` contains `updated the source branch` and `ai-dlc/pr/pr-review` is in `resource.labels` |
 
 ### GitHub
 
@@ -131,16 +139,16 @@ All triggers require the agent (`xianix-agent`) to be listed as a reviewer on th
   "name": "github-pull-request-review",
   "match-any": [
     {
-      "name": "github-pr-opened-event",
-      "rule": "action==opened&&pull_request.requested_reviewers.*.login=='xianix-agent'"
+      "name": "github-pr-tag-applied",
+      "rule": "action==labeled&&label.name=='ai-dlc/pr/pr-review'"
     },
     {
-      "name": "github-pr-synchronize-event",
-      "rule": "action==synchronize&&pull_request.requested_reviewers.*.login=='xianix-agent'"
+      "name": "github-pr-opened-with-tag",
+      "rule": "action==opened&&pull_request.labels.*.name=='ai-dlc/pr/pr-review'"
     },
     {
-      "name": "github-pr-review-requested-event",
-      "rule": "action==review_requested&&requested_reviewer.login=='xianix-agent'"
+      "name": "github-pr-synchronize-with-tag",
+      "rule": "action==synchronize&&pull_request.labels.*.name=='ai-dlc/pr/pr-review'"
     }
   ],
   "use-inputs": [
@@ -168,16 +176,16 @@ All triggers require the agent (`xianix-agent`) to be listed as a reviewer on th
   "name": "azuredevops-pull-request-review",
   "match-any": [
     {
-      "name": "azuredevops-pr-created",
-      "rule": "eventType==git.pullrequest.created&&resource.reviewers.*.displayName=='xianix-agent'"
+      "name": "azuredevops-pr-tag-applied",
+      "rule": "eventType==git.pullrequest.updated&&message.text*='tagged the pull request'&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
     },
     {
-      "name": "azuredevops-pr-source-branch-updated",
-      "rule": "eventType==git.pullrequest.updated&&resource.reviewers.*.displayName=='xianix-agent'&&message.text*='updated the source branch'"
+      "name": "azuredevops-pr-created-with-tag",
+      "rule": "eventType==git.pullrequest.created&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
     },
     {
-      "name": "azuredevops-pr-reviewer-assigned",
-      "rule": "eventType==git.pullrequest.updated&&resource.reviewers.*.displayName=='xianix-agent'&&message.text*='as a reviewer'"
+      "name": "azuredevops-pr-source-branch-updated-with-tag",
+      "rule": "eventType==git.pullrequest.updated&&message.text*='updated the source branch'&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
     }
   ],
   "use-inputs": [

@@ -9,11 +9,13 @@ const base = '/documentation';
 // Starlight does not auto-prepend the base path to absolute links in markdown
 // content. This plugin rewrites them at build time so content files stay
 // deployment-agnostic (no hardcoded /documentation/ in every link).
+/** @returns {(tree: import('unist').Node) => void} */
 function remarkPrependBase() {
 	return (tree) => {
 		visit(tree, ['link', 'definition'], (node) => {
-			if (node.url && node.url.startsWith('/') && !node.url.startsWith('//')) {
-				node.url = base + node.url;
+			const linkNode = /** @type {{ url?: string }} */ (node);
+			if (linkNode.url && linkNode.url.startsWith('/') && !linkNode.url.startsWith('//')) {
+				linkNode.url = base + linkNode.url;
 			}
 		});
 	};
@@ -61,8 +63,10 @@ export default defineConfig({
 			{
 				label: 'Official Plugins',
 				items: [
-					{ label: 'Agent Team', slug: 'official-plugins/agent-team' },
+					{ label: 'Adoption Guide', slug: 'official-plugins/adoption-guide' },
 					{ label: 'Marketplace Overview', slug: 'official-plugins/overview' },
+					{ label: 'Issue Lifecycle', slug: 'official-plugins/issue-lifecycle' },
+					{ label: 'PR Lifecycle', slug: 'official-plugins/pr-lifecycle' },
 					{ label: 'PR Reviewer', slug: 'official-plugins/pr-reviewer' },
 					{ label: 'Requirement Analyst', slug: 'official-plugins/req-analyst' },
 				],

@@ -69,7 +69,9 @@ export default defineConfig({
 					{ label: 'PR Lifecycle', slug: 'official-plugins/pr-lifecycle' },
 					{ label: 'PR Reviewer', slug: 'official-plugins/pr-reviewer' },
 					{ label: 'PR Comment Resolver', slug: 'official-plugins/pr-comment-resolver' },
+					{ label: 'Document Updater', slug: 'official-plugins/doc-writer' },
 					{ label: 'Requirement Analyst', slug: 'official-plugins/req-analyst' },
+					{ label: 'Incident Response', slug: 'official-plugins/incident-response' },
 				],
 			},
 				{

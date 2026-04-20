@@ -1,5 +1,5 @@
 ---
-title: Doc Writer
+title: Document Updater
 description: Automated documentation updates that analyze PR source changes and keep your Docs/ folder and READMEs in sync.
 ---
 

@@ -49,6 +49,7 @@ Each plugin can be installed and triggered on its own. The reference pages docum
 | --- | --- |
 | [PR Reviewer](./pr-reviewer) | Parallel code-quality, security, test, and performance review — posted straight to your PR. Powers the `pr-reviewer` agent in AI-DLC. |
 | [Requirement Analyst](./req-analyst) | Multi-phase requirement grooming: intent, domain, journeys, personas, and gap analysis. Powers the `req-analyst` agent in AI-DLC. |
+| [Package Dependency Upgrade Agent](./package-dependency-upgrade-agent) | Scheduled scan of dependency manifests and lockfiles; opens a PR with recommended library and framework upgrades. Powers the `package-dependency-upgrade-agent` continuous-review agent in AI-DLC. |
 
 ---
 

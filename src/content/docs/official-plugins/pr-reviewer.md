@@ -202,6 +202,9 @@ There is no longer any reviewer-assignment based trigger. The label or tag is th
       "marketplace": "xianix-team/plugins-official"
     }
   ],
+  "with-envs": [
+    { "name": "PR_REVIEWER_BLOCK_ON_CRITICAL", "value": "false", "constant": true }
+  ],
   "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{pr-head-branch}}).\n\nRun /code-review to perform the automated review. The `az` CLI is authenticated and available if you need it directly."
 }
 ```

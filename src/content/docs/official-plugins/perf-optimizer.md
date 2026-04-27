@@ -70,7 +70,7 @@ The platform is **auto-detected** from `git remote`. Scope hints are optional; i
 
 ### Scope hint format
 
-Hints are picked up from any line in the issue or work item body that starts with `Scope:` or `Target:`. Every other line is treated as plain context the agent reads but the parser ignores. Both hints are optional and independent — use whichever combination matches what you know.
+When creating a GitHub issue or Azure DevOps work item, you can add scope hints to the body to focus the analysis on a specific area or runtime. Any line that starts with `Scope:` or `Target:` is parsed as a hint; every other line is treated as plain context the agent reads but the parser ignores. Both hints are optional and independent — use whichever combination matches what you know.
 
 **Typical — describe the problem and add hints:**
 

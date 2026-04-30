@@ -58,21 +58,23 @@ export default defineConfig({
 				{ label: 'Azure DevOps Setup', slug: 'agent-configuration/azure-devops' },
 				{ label: 'GitHub Setup', slug: 'agent-configuration/github' },
 				{ label: 'Rules Configuration', slug: 'agent-configuration/rules' },
+				{ label: 'Adoption Guide', slug: 'agent-configuration/adoption-guide' },
+				{ label: 'Marketplace Overview', slug: 'agent-configuration/overview' },
+				{ label: 'Issue Lifecycle', slug: 'agent-configuration/issue-lifecycle' },
+				{ label: 'PR Lifecycle', slug: 'agent-configuration/pr-lifecycle' },
 					],
 				},
 			{
 				label: 'Official Plugins',
 				items: [
-					{ label: 'Adoption Guide', slug: 'official-plugins/adoption-guide' },
-					{ label: 'Marketplace Overview', slug: 'official-plugins/overview' },
-					{ label: 'Issue Lifecycle', slug: 'official-plugins/issue-lifecycle' },
-					{ label: 'PR Lifecycle', slug: 'official-plugins/pr-lifecycle' },
+
 					{ label: 'PR Reviewer', slug: 'official-plugins/pr-reviewer' },
 					{ label: 'Performance Optimizer', slug: 'official-plugins/perf-optimizer' },
 					{ label: 'PR Comment Resolver', slug: 'official-plugins/pr-comment-resolver' },
 					{ label: 'Document Updater', slug: 'official-plugins/doc-writer' },
 					{ label: 'Requirement Analyst', slug: 'official-plugins/req-analyst' },
 					{ label: 'Incident Response', slug: 'official-plugins/incident-response' },
+					{ label: 'Test Strategist', slug: 'official-plugins/test-strategist' },
 				],
 			},
 				{

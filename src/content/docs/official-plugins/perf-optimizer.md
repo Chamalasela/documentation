@@ -149,14 +149,16 @@ The agent only commits changes for findings it classifies as **low-risk quick wi
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for issue reads, branch push, PR creation, and comment publishing |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls against work items, code, and pull requests |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for issue reads, branch push, PR creation, and comment publishing |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls against work items, code, and pull requests |
 
 ### GitHub Token Permissions
 
-The `GITHUB_TOKEN` requires:
+The `GITHUB-TOKEN` requires:
 
 | Permission | Access | Why it's needed |
 |---|---|---|
@@ -167,7 +169,7 @@ The `GITHUB_TOKEN` requires:
 
 ### Azure DevOps PAT Scopes
 
-The `AZURE_DEVOPS_TOKEN` requires:
+The `AZURE-DEVOPS-TOKEN` requires:
 
 | Scope | Access | Why it's needed |
 |---|---|---|
@@ -203,6 +205,22 @@ The Performance Optimizer is **label-driven** with a single trigger:
 | GitHub | `issues` `action==labeled` | `label.name=='ai-dlc/perf/optimize'` |
 | Azure DevOps | `workitem.updated` | `resource.fields['System.Tags']` contains `ai-dlc/perf/optimize` |
 
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`). Omit the entire `repository` block for Azure DevOps **work items** — work items aren't bound to a single repo, so the URL must be supplied as a constant `use-inputs` entry instead (one rule per repo). |
+| `repository.ref` | Webhook path to the branch ref (e.g. `repository.default_branch`). Used only when the trigger event carries one. |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `issue-number`, `workitem-id`). The plugin fetches the body / hints / metadata it needs from the platform API at runtime using the token in `with-envs`. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block, plus any `name` from `use-inputs` |
+
 ### GitHub Rule
 
 ```json
@@ -220,11 +238,7 @@ The Performance Optimizer is **label-driven** with a single trigger:
     }
   ],
   "use-inputs": [
-    { "name": "issue-number",    "value": "issue.number" },
-    { "name": "issue-title",     "value": "issue.title" },
-    { "name": "issue-body",      "value": "issue.body" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "default-branch",  "value": "repository.default_branch" }
+    { "name": "issue-number", "value": "issue.number", "mandatory": true }
   ],
   "use-plugins": [
     {
@@ -233,39 +247,29 @@ The Performance Optimizer is **label-driven** with a single trigger:
     }
   ],
   "with-envs": [
-    {
-      "name": "GITHUB-TOKEN",
-      "value": "secrets.GITHUB-TOKEN",
-      "mandatory": true
-    }
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
   ],
-  "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by issue #{{issue-number}} titled \"{{issue-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the issue body below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/issue-{{issue-number}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and include `Closes #{{issue-number}}`. After opening the PR, post a comment on issue #{{issue-number}} linking to it.\n\nIssue body:\n{{issue-body}}"
+  "execute-prompt": "Whole-codebase performance review triggered by issue #{{issue-number}} in {{repository-name}} on the {{git-ref}} branch.\n\nRun /perf-optimize {{issue-number}} — fetch the issue body, parse any `Scope:` / `Target:` hints, scan the selected scope (default: entire codebase), apply only low-risk optimizations on a new `perf/issue-{{issue-number}}-<slug>` branch, open a pull request against {{git-ref}} with the full performance report embedded and `Closes #{{issue-number}}`, then comment on issue #{{issue-number}} linking to the new PR."
 }
 ```
 
 ### Azure DevOps Rule
 
-Because work items are project-scoped (not repo-scoped), the target repository URL must be configured on the rule itself rather than read from the event payload. Deploy one rule per repository you want to cover.
+Because work items are project-scoped (not repo-scoped), the target repository URL must be configured on the rule itself rather than read from the event payload. Deploy one rule per repository you want to cover — using a constant `use-inputs` entry for the repo URL.
 
 ```json
 {
   "name": "azuredevops-performance-optimizer",
   "platform": "azuredevops",
-  "repository": {
-    "url": { "value": "https://dev.azure.com/<org>/<project>/_git/<repo>", "constant": true },
-    "ref": { "value": "main", "constant": true }
-  },
   "match-any": [
     {
       "name": "azuredevops-workitem-tagged",
-      "rule": "eventType==workitem.updated&&resource.fields.System.Tags*='ai-dlc/perf/optimize'"
+      "rule": "eventType==workitem.updated&&resource.revision.fields.\"System.Tags\"*='ai-dlc/perf/optimize'&&resource.fields.\"System.Tags\".oldValue!*='ai-dlc/perf/optimize'"
     }
   ],
   "use-inputs": [
-    { "name": "workitem-id",     "value": "resource.id" },
-    { "name": "workitem-title",  "value": "resource.fields.System.Title" },
-    { "name": "workitem-body",   "value": "resource.fields.System.Description" },
-    { "name": "repository-name", "value": "<org>/<project>/<repo>", "constant": true },
+    { "name": "workitem-id",     "value": "resource.workItemId", "mandatory": true },
+    { "name": "repository-url",  "value": "https://dev.azure.com/<org>/<project>/_git/<repo>", "constant": true, "mandatory": true },
     { "name": "default-branch",  "value": "main", "constant": true }
   ],
   "use-plugins": [
@@ -275,18 +279,14 @@ Because work items are project-scoped (not repo-scoped), the target repository U
     }
   ],
   "with-envs": [
-    {
-      "name": "AZURE-DEVOPS-TOKEN",
-      "value": "secrets.AZURE-DEVOPS-TOKEN",
-      "mandatory": true
-    }
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
   ],
-  "execute-prompt": "You are running a whole-codebase performance review for repository {{repository-name}} triggered by work item #{{workitem-id}} titled \"{{workitem-title}}\".\n\nFetch the default branch ({{default-branch}}), parse any `Scope:` / `Target:` hints from the work item description below, and run /perf-optimize across the selected scope (default: entire codebase).\n\nApply only low-risk optimizations on a new branch named `perf/workitem-{{workitem-id}}-<slug>` and open a pull request against {{default-branch}}. The PR body MUST embed the full performance report and reference work item #{{workitem-id}}. After opening the PR, post a comment on the work item linking to it.\n\nWork item description:\n{{workitem-body}}"
+  "execute-prompt": "Whole-codebase performance review triggered by work item #{{workitem-id}}. Target repo: {{repository-url}} (branch: {{default-branch}}).\n\nRun /perf-optimize {{workitem-id}} — fetch the work item description, parse any `Scope:` / `Target:` hints, scan the selected scope (default: entire codebase), apply only low-risk optimizations on a new `perf/workitem-{{workitem-id}}-<slug>` branch, open a pull request against {{default-branch}} with the full performance report embedded and a reference to work item #{{workitem-id}}, then post a link-back comment on the work item."
 }
 ```
 
 :::note
-Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps rule with your actual values. Deploy one rule per repository you want to cover.
+Replace the `<org>`, `<project>`, and `<repo>` placeholders in the Azure DevOps rule with your actual values. Deploy one rule per repository you want to cover. The `repository-url` constant is what makes that per-repo deployment possible — without it, the plugin has no way to know which repo to clone from a project-scoped work item event.
 :::
 
 :::note

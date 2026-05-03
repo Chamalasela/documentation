@@ -61,20 +61,31 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR data, committing changes, and posting comments |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR data, committing changes, and posting comments |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
 
 ### GitHub Token Permissions
 
-The `GITHUB_TOKEN` requires the following repository permissions:
+The `GITHUB-TOKEN` requires the following repository permissions:
 
 | Permission | Access | Why it's needed |
 |---|---|---|
 | **Contents** | Read & Write | Read source and documentation files; commit documentation updates to the PR branch |
 | **Metadata** | Read | Search repositories, list collaborators, and access repository metadata |
 | **Pull requests** | Read & Write | Fetch PR diffs, post summary comments, and open follow-up PRs after merge |
+
+### Azure DevOps Token Permissions
+
+The `AZURE-DEVOPS-TOKEN` (Personal Access Token) requires:
+
+| Permission | Access | Why it's needed |
+|---|---|---|
+| **Code** | Read & Write | Read source and documentation files; push documentation commits |
+| **Pull Request Threads** | Read & Write | Post the doc-update summary on the PR thread |
 
 ---
 
@@ -117,11 +128,32 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
 | Azure DevOps | PR created with tag | `git.pullrequest.created` | `ai-dlc/pr/update-docs` is in `resource.labels` |
 | Azure DevOps | New commits to tagged PR | `git.pullrequest.updated` | `message.text` contains `updated the source branch` and `ai-dlc/pr/update-docs` is in `resource.labels` |
 
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`, `resource.repository.remoteUrl`) |
+| `repository.ref` | Webhook path to the branch ref (e.g. `pull_request.head.ref`, `resource.sourceRefName`) |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `pr-number`). The repository URL and ref are injected automatically from the `repository` block. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block, plus any `name` from `use-inputs` |
+
 ### GitHub
 
 ```json
 {
   "name": "github-pull-request-doc-update",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "pull_request.head.ref"
+  },
   "match-any": [
     {
       "name": "github-pr-tag-applied",
@@ -137,12 +169,7 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
     }
   ],
   "use-inputs": [
-    { "name": "pr-number",       "value": "number" },
-    { "name": "repository-url",  "value": "repository.clone_url" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "pr-title",        "value": "pull_request.title" },
-    { "name": "pr-head-branch",  "value": "pull_request.head.ref" },
-    { "name": "platform",        "value": "github", "constant": true }
+    { "name": "pr-number", "value": "number" }
   ],
   "use-plugins": [
     {
@@ -150,7 +177,10 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are updating documentation for pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{pr-head-branch}}).\n\nRun /update-docs to analyze the modified source files and update the relevant documentation. The `gh` CLI is authenticated and available if you need it directly."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Pull request #{{pr-number}} in {{repository-name}} (branch: {{git-ref}}) has been tagged for documentation updates.\n\nRun /update-docs {{pr-number}} to analyze the modified source files and update the relevant documentation."
 }
 ```
 
@@ -159,6 +189,11 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
 ```json
 {
   "name": "azuredevops-pull-request-doc-update",
+  "platform": "azuredevops",
+  "repository": {
+    "url": "resource.repository.remoteUrl",
+    "ref": "resource.sourceRefName"
+  },
   "match-any": [
     {
       "name": "azuredevops-pr-tag-applied",
@@ -170,16 +205,11 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
     },
     {
       "name": "azuredevops-pr-source-branch-updated-with-tag",
-      "rule": "eventType==git.pullrequest.updated&&message.text*='updated the source branch'&&resource.labels.*.name=='ai-dlc/pr/update-docs'"
+      "rule": "eventType==git.pullrequest.updated&&resource.labels.*.name=='ai-dlc/pr/update-docs'&&message.text*='updated the source branch'"
     }
   ],
   "use-inputs": [
-    { "name": "pr-number",       "value": "resource.pullRequestId" },
-    { "name": "repository-url",  "value": "resource.repository.remoteUrl" },
-    { "name": "repository-name", "value": "resource.repository.name" },
-    { "name": "pr-title",        "value": "resource.title" },
-    { "name": "pr-head-branch",  "value": "resource.sourceRefName" },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "pr-number", "value": "resource.pullRequestId" }
   ],
   "use-plugins": [
     {
@@ -187,7 +217,10 @@ The label or tag is the single source of truth for "update docs for this PR." Wh
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are updating documentation for pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{pr-head-branch}}).\n\nRun /update-docs to analyze the modified source files and update the relevant documentation. The `az` CLI is authenticated and available if you need it directly."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Pull request #{{pr-number}} in {{repository-name}} (branch: {{git-ref}}) has been tagged for documentation updates.\n\nRun /update-docs {{pr-number}} to analyze the modified source files and update the relevant documentation."
 }
 ```
 

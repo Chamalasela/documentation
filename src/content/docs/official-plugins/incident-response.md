@@ -91,17 +91,19 @@ The platform (Azure DevOps, GitHub, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for work items, build, and release pipeline API |
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for issues and Actions API |
-| `ACTIONS_TOKEN` | GitHub Actions | Optional | Separate token if Actions API needs elevated scope |
-| `AZURE_CLIENT_ID` | Azure Monitor | Yes (for logs) | Service principal client ID for `az` CLI authentication |
-| `AZURE_CLIENT_SECRET` | Azure Monitor | Yes (for logs) | Service principal secret |
-| `AZURE_TENANT_ID` | Azure Monitor | Yes (for logs) | Azure AD tenant ID |
-| `LOG_ANALYTICS_WORKSPACE_ID` | Azure Monitor | Yes (for logs) | Log Analytics workspace ID to query |
-| `INCIDENT_WINDOW_HOURS` | All | No | Blast radius window in hours (default: 2) |
-| `METRICS_SOURCE` | All | No | Path to metrics JSON snapshot file |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for work items, build, and release pipeline API |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for issues and Actions API |
+| `ACTIONS-TOKEN` | GitHub Actions | Optional | Separate token if Actions API needs elevated scope |
+| `AZURE-CLIENT-ID` | Azure Monitor | Yes (for logs) | Service principal client ID for `az` CLI authentication |
+| `AZURE-CLIENT-SECRET` | Azure Monitor | Yes (for logs) | Service principal secret |
+| `AZURE-TENANT-ID` | Azure Monitor | Yes (for logs) | Azure AD tenant ID |
+| `LOG-ANALYTICS-WORKSPACE-ID` | Azure Monitor | Yes (for logs) | Log Analytics workspace ID to query |
+| `INCIDENT-WINDOW-HOURS` | All | No | Blast radius window in hours (default: 2) |
+| `METRICS-SOURCE` | All | No | Path to metrics JSON snapshot file |
 
 :::tip
 For local use, `az login` can replace `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID`. For CI/CD pipelines, the service principal approach is recommended.
@@ -152,11 +154,30 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
 | Azure DevOps | Tag newly applied | `workitem.updated` | `ai-dlc/incident/respond` appears in new `System.Tags` but not in `oldValue` |
 | Azure DevOps | Work item created with tag | `workitem.created` | `ai-dlc/incident/respond` is in `resource.fields["System.Tags"]` |
 
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`). Omit the entire `repository` block for Azure DevOps **work items** — the work item itself is not bound to a single repo. |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `issue-number`, `workitem-id`). The repository URL is injected automatically from the `repository` block when present. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` from the `repository` block (when present), plus any `name` from `use-inputs` |
+
 ### GitHub
 
 ```json
 {
   "name": "github-issue-incident-response",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url"
+  },
   "match-any": [
     {
       "name": "github-issue-tag-applied",
@@ -168,11 +189,7 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
     }
   ],
   "use-inputs": [
-    { "name": "issue-number",    "value": "issue.number" },
-    { "name": "repository-url",  "value": "repository.clone_url" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "issue-title",     "value": "issue.title" },
-    { "name": "platform",        "value": "github", "constant": true }
+    { "name": "issue-number", "value": "issue.number", "mandatory": true }
   ],
   "use-plugins": [
     {
@@ -180,7 +197,10 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "Issue #{{issue-number}} titled \"{{issue-title}}\" in {{repository-name}} has been tagged with `ai-dlc/incident/respond`.\n\nRun /incident-response {{issue-number}} to begin automated incident investigation."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Issue #{{issue-number}} in {{repository-name}} has been tagged with `ai-dlc/incident/respond`.\n\nRun /incident-response {{issue-number}} to begin automated incident investigation."
 }
 ```
 
@@ -189,6 +209,7 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
 ```json
 {
   "name": "azuredevops-workitem-incident-response",
+  "platform": "azuredevops",
   "match-any": [
     {
       "name": "azuredevops-workitem-tag-applied",
@@ -200,12 +221,7 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
     }
   ],
   "use-inputs": [
-    { "name": "workitem-id",     "value": "resource.workItemId" },
-    { "name": "workitem-title",  "value": "resource.revision.fields.\"System.Title\"" },
-    { "name": "workitem-type",   "value": "resource.revision.fields.\"System.WorkItemType\"" },
-    { "name": "project-name",    "value": "resource.revision.fields.\"System.TeamProject\"" },
-    { "name": "repository-url",  "value": "https://org@dev.azure.com/org/Project/_git/Repo", "constant": true },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "workitem-id", "value": "resource.workItemId", "mandatory": true }
   ],
   "use-plugins": [
     {
@@ -213,9 +229,16 @@ The Incident Response Agent is **tag-driven**. It runs when the `ai-dlc/incident
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "Work item ({{workitem-type}}) #{{workitem-id}} titled \"{{workitem-title}}\" in project {{project-name}} has been tagged with `ai-dlc/incident/respond`.\n\nRun /incident-response {{workitem-id}} to begin automated incident investigation."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Work item #{{workitem-id}} has been tagged with `ai-dlc/incident/respond`.\n\nRun /incident-response {{workitem-id}} to begin automated incident investigation."
 }
 ```
+
+:::tip[Observability credentials]
+For Azure Monitor / Log Analytics access (the `AZURE-CLIENT-ID`, `AZURE-CLIENT-SECRET`, `AZURE-TENANT-ID`, and `LOG-ANALYTICS-WORKSPACE-ID` env vars listed above), add them as additional `with-envs` entries on the rule alongside the platform token. Mark `mandatory: true` only if your runbook requires log/metrics analysis on every run.
+:::
 
 :::note
 These blocks go inside the `executions` array of a rule set. See [Rules Configuration](/agent-configuration/rules/) for the full file structure and filter syntax.

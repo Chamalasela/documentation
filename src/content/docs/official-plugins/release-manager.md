@@ -119,15 +119,17 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Access releases, PRs, and pipeline status |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | Access pipelines, work items, and release data |
-| `OBSERVABILITY_API_KEY` | Monitoring | No | Fetch logs and metrics from staging |
+| `GITHUB-TOKEN` | GitHub | Yes | Access releases, PRs, and pipeline status |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | Access pipelines, work items, and release data |
+| `OBSERVABILITY-API-KEY` | Monitoring | No | Fetch logs and metrics from staging |
 
 ### GitHub Token Permissions
 
-The `GITHUB_TOKEN` requires the following repository permissions:
+The `GITHUB-TOKEN` requires the following repository permissions:
 
 | Permission | Access | Why it's needed |
 |---|---|---|
@@ -136,6 +138,17 @@ The `GITHUB_TOKEN` requires the following repository permissions:
 | **Pull requests** | Read | Fetch PRs included in the release |
 | **Actions** | Read | Access CI pipeline run results and status |
 | **Checks** | Read | Read check-run status for gate validation |
+
+### Azure DevOps Token Permissions
+
+The `AZURE-DEVOPS-TOKEN` (Personal Access Token) requires:
+
+| Permission | Access | Why it's needed |
+|---|---|---|
+| **Code** | Read | Access repository contents, commits, and tags |
+| **Build** | Read | Read pipeline run results and status |
+| **Release** | Read | Read release pipeline state and deployment metadata |
+| **Work Items** | Read | Fetch work items included in the release |
 
 ---
 
@@ -173,47 +186,66 @@ The Release Manager is **event-driven**. It runs when the `ai-dlc/release/check`
 | GitHub | Label applied to PR | `pull_request` | `action==labeled` and `label.name=='ai-dlc/release/check'` |
 | Azure DevOps | Deployment started | `ms.vss-release.deployment-started-event` | `resource.environment.name` is present |
 
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`). Omit for Azure DevOps **release-pipeline** events — those are project-scoped, not repo-scoped. |
+| `repository.ref` | Webhook path to the branch ref (e.g. `release.target_commitish`). Optional. |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `release-version`). The plugin fetches release notes, PRs, and pipeline state from the platform API at runtime. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block, plus any `name` from `use-inputs` |
+
 ### GitHub
 
 ```json
 {
   "name": "github-release-check",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "release.target_commitish"
+  },
   "match-any": [
     {
       "name": "github-release-published",
       "rule": "action==published"
-    },
-    {
-      "name": "github-release-check-tag-applied",
-      "rule": "action==labeled&&label.name=='ai-dlc/release/check'"
     }
   ],
   "use-inputs": [
-    { "name": "release-version",  "value": "release.tag_name" },
-    { "name": "repository-url",   "value": "repository.clone_url" },
-    { "name": "repository-name",  "value": "repository.full_name" },
-    { "name": "release-name",     "value": "release.name" },
-    { "name": "target-branch",    "value": "release.target_commitish" },
-    { "name": "platform",         "value": "github", "constant": true }
+    { "name": "release-version", "value": "release.tag_name", "mandatory": true }
   ],
   "use-plugins": [
     {
       "plugin-name": "release-manager@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "GITHUB_TOKEN", "secret": true }
-      ]
+      "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are validating release {{release-version}} (\"{{release-name}}\") from branch {{target-branch}} in the repository {{repository-name}}.\n\nRun /release-check {{release-version}} to perform the automated release validation. The `gh` CLI is authenticated and available if you need it directly."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Release {{release-version}} has been published in {{repository-name}} from branch {{git-ref}}.\n\nRun /release-check {{release-version}} to perform the automated release validation."
 }
 ```
 
+:::tip[Triggering on PR labels too?]
+The previous version of this rule combined `release.published` and `pull_request.labeled` triggers in a single block. With the new minimal-input format these no longer share a common entry-point id, so the cleaner pattern is **one rule per trigger source**. If you also want a label-applied trigger, deploy a second rule that filters on `action==labeled&&label.name=='ai-dlc/release/check'` and uses `pull_request.head.ref` (or a constant) for the version.
+:::
+
 ### Azure DevOps
+
+Release-pipeline events are project-scoped, not repo-scoped, so the `repository` block is omitted. The plugin reads pipeline / release artifact metadata at runtime via the Azure DevOps REST API.
 
 ```json
 {
   "name": "azuredevops-release-check",
+  "platform": "azuredevops",
   "match-any": [
     {
       "name": "ado-deployment-started",
@@ -221,23 +253,18 @@ The Release Manager is **event-driven**. It runs when the `ai-dlc/release/check`
     }
   ],
   "use-inputs": [
-    { "name": "release-version",  "value": "resource.release.name" },
-    { "name": "repository-url",   "value": "resource.project.url" },
-    { "name": "repository-name",  "value": "resource.project.name" },
-    { "name": "environment",      "value": "resource.environment.name" },
-    { "name": "release-id",       "value": "resource.release.id" },
-    { "name": "platform",         "value": "azuredevops", "constant": true }
+    { "name": "release-id", "value": "resource.release.id", "mandatory": true }
   ],
   "use-plugins": [
     {
       "plugin-name": "release-manager@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official",
-      "envs": [
-        { "name": "AZURE_DEVOPS_TOKEN", "secret": true }
-      ]
+      "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are validating release {{release-version}} targeting environment {{environment}} in the project {{repository-name}}.\n\nRun /release-check {{release-version}} to perform the automated release validation. The `az` CLI is authenticated and available if you need it directly."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Azure DevOps release deployment started — release id {{release-id}}.\n\nRun /release-check {{release-id}} to perform the automated release validation. Resolve the release name, target environment, and repository from the release id via the `az` CLI."
 }
 ```
 

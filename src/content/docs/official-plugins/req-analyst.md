@@ -73,10 +73,12 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for reading issues and posting comments |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls (read work items, post comments) |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for reading issues and posting comments |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls (read work items, post comments) |
 
 :::tip
 For CI pipelines, you can also set `PLATFORM`, `REPO_URL`, and `ISSUE_NUMBER` to drive the plugin without interactive input.
@@ -104,27 +106,48 @@ Add one (or both) of the execution blocks below to your `rules.json` so the Xian
 
 ### When does the agent trigger?
 
-The Requirement Analyst is **tag-driven**. It runs when the `ai-dlc/issue/analyze` label (GitHub) or tag (Azure DevOps) is present on an issue / work item and one of the following happens (OR logic across `match-any` entries):
+The Requirement Analyst uses a different "ask the agent" mechanism on each platform:
+
+- **GitHub** — **tag-driven**. Add the `ai-dlc/issue/analyze` label to an issue (or open the issue with that label already on it).
+- **Azure DevOps** — **assignment-driven**. **Assign the work item to `xianix-agent <xianix-agent@99x.io>`** and set its state to `To Do`. No tag is needed.
 
 | Scenario | What it covers |
 |---|---|
-| Tag newly applied | A human (or another rule) adds `ai-dlc/issue/analyze` to an existing issue or work item |
-| Issue / work item created with the tag already present | The item is opened with the tag included from the start |
-
-There is no longer any assignee-based trigger. The label or tag is the single source of truth for "analyze this backlog item."
+| GitHub — tag newly applied | A human (or another rule) adds `ai-dlc/issue/analyze` to an existing issue |
+| GitHub — issue opened with tag | The issue is created with the label included from the start |
+| Azure DevOps — assigned to agent in `To Do` | The work item's assignee is changed to `xianix-agent <xianix-agent@99x.io>` while the state is `To Do` |
 
 | Platform | Scenario | Webhook event | Filter rule |
 |---|---|---|---|
-| GitHub | Tag newly applied | `issues` | `action==labeled` and the just-added `label.name=='ai-dlc/issue/analyze'` |
+| GitHub | Tag newly applied | `issues` | `action==labeled` and `label.name=='ai-dlc/issue/analyze'` |
 | GitHub | Issue opened with tag | `issues` | `action==opened` and `ai-dlc/issue/analyze` is in `issue.labels` |
-| Azure DevOps | Tag newly applied | `workitem.updated` | `ai-dlc/issue/analyze` appears in the new `resource.revision.fields["System.Tags"]` value but not in `resource.fields["System.Tags"].oldValue` |
-| Azure DevOps | Work item created with tag | `workitem.created` | `ai-dlc/issue/analyze` is in `resource.fields["System.Tags"]` |
+| Azure DevOps | Assigned to xianix-agent in `To Do` | `workitem.updated` | `resource.fields."System.AssignedTo".newValue=='xianix-agent <xianix-agent@99x.io>'` and `resource.revision.fields."System.State"=='To Do'` |
+
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`). Omit the entire `repository` block for Azure DevOps **work items** — the work item itself is not bound to a single repo. |
+| `repository.ref` | Optional. Webhook path to the branch ref. Not used by req-analyst — included only when the plugin needs to read repo content for a specific branch. |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `issue-number`, `workitem-id`). The repository URL is injected automatically from the `repository` block when present. Mark inputs the plugin must have as `mandatory: true`. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` from the `repository` block (when present), plus any `name` from `use-inputs` |
 
 ### GitHub
 
 ```json
 {
   "name": "github-issue-requirement-analysis",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url"
+  },
   "match-any": [
     {
       "name": "github-issue-tag-applied",
@@ -136,11 +159,7 @@ There is no longer any assignee-based trigger. The label or tag is the single so
     }
   ],
   "use-inputs": [
-    { "name": "issue-number",    "value": "issue.number" },
-    { "name": "repository-url",  "value": "repository.clone_url" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "issue-title",     "value": "issue.title" },
-    { "name": "platform",        "value": "github", "constant": true }
+    { "name": "issue-number", "value": "issue.number", "mandatory": true }
   ],
   "use-plugins": [
     {
@@ -148,7 +167,10 @@ There is no longer any assignee-based trigger. The label or tag is the single so
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "Issue #{{issue-number}} titled \"{{issue-title}}\" in the repository {{repository-name}} has been tagged with `ai-dlc/issue/analyze` for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated requirement analysis and elaboration."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Issue #{{issue-number}} in the repository {{repository-name}} has been assigned to xianix-agent for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated requirement analysis and elaboration."
 }
 ```
 
@@ -157,23 +179,15 @@ There is no longer any assignee-based trigger. The label or tag is the single so
 ```json
 {
   "name": "azuredevops-work-item-requirement-analysis",
+  "platform": "azuredevops",
   "match-any": [
     {
-      "name": "azuredevops-workitem-tag-applied",
-      "rule": "eventType==workitem.updated&&resource.revision.fields.\"System.Tags\"*='ai-dlc/issue/analyze'&&resource.fields.\"System.Tags\".oldValue!*='ai-dlc/issue/analyze'"
-    },
-    {
-      "name": "azuredevops-workitem-created-with-tag",
-      "rule": "eventType==workitem.created&&resource.fields.\"System.Tags\"*='ai-dlc/issue/analyze'"
+      "name": "azuredevops-workitem-assigned-to-agent",
+      "rule": "eventType==workitem.updated&&resource.fields.\"System.AssignedTo\".newValue=='xianix-agent <xianix-agent@99x.io>'&&resource.revision.fields.\"System.State\"=='To Do'"
     }
   ],
   "use-inputs": [
-    { "name": "workitem-id",     "value": "resource.workItemId" },
-    { "name": "workitem-title",  "value": "resource.revision.fields.\"System.Title\"" },
-    { "name": "workitem-type",   "value": "resource.revision.fields.\"System.WorkItemType\"" },
-    { "name": "project-name",    "value": "resource.revision.fields.\"System.TeamProject\"" },
-    { "name": "repository-url",  "value": "https://org@dev.azure.com/org/Project/_git/Repo", "constant": true },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "workitem-id", "value": "resource.workItemId" }
   ],
   "use-plugins": [
     {
@@ -181,7 +195,10 @@ There is no longer any assignee-based trigger. The label or tag is the single so
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "Work item ({{workitem-type}}) #{{workitem-id}} titled \"{{workitem-title}}\" in project {{project-name}} has been tagged with `ai-dlc/issue/analyze` for requirement analysis.\n\nRun /requirement-analysis {{workitem-id}} to perform the automated requirement analysis and elaboration."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Work item #{{workitem-id}} has been assigned to xianix-agent for requirement analysis.\n\nRun /requirement-analysis {{workitem-id}} to perform the automated requirement analysis and elaboration."
 }
 ```
 

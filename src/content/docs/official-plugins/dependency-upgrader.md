@@ -184,22 +184,33 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for creating branches, pushing commits, and opening PRs |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
-| `NPM_TOKEN` | Optional | No | Query private npm registries |
-| `PIP_INDEX_URL` | Optional | No | Query private PyPI indexes |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for creating branches, pushing commits, and opening PRs |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
+| `NPM-TOKEN` | Optional | No | Query private npm registries |
+| `PIP-INDEX-URL` | Optional | No | Query private PyPI indexes |
 
 ### GitHub Token Permissions
 
-The `GITHUB_TOKEN` requires the following repository permissions:
+The `GITHUB-TOKEN` requires the following repository permissions:
 
 | Permission | Access | Why it's needed |
 |---|---|---|
 | **Contents** | Read & Write | Clone the repo, create a branch, and commit manifest/lockfile updates |
 | **Metadata** | Read | List collaborators and access repository metadata |
 | **Pull requests** | Read & Write | Open the upgrade PR and post the recommendation summary |
+
+### Azure DevOps Token Permissions
+
+The `AZURE-DEVOPS-TOKEN` (Personal Access Token) requires:
+
+| Permission | Access | Why it's needed |
+|---|---|---|
+| **Code** | Read & Write | Clone the repo, push the upgrade branch, and commit manifest/lockfile updates |
+| **Pull Request Threads** | Read & Write | Open the upgrade PR and post the recommendation summary |
 
 ---
 
@@ -240,11 +251,32 @@ There is no label-based trigger for this agent. The cadence (and optional manual
 | Azure DevOps | Weekly scheduled | `scheduled` | `event_type=='scheduled-package-upgrade'` |
 | Azure DevOps | Manual dispatch | `ms.vss-pipelines.run-state-changed-event` | `resource.pipeline.name=='package-upgrade-scan'` |
 
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`, `resource.repository.remoteUrl`) |
+| `repository.ref` | Webhook path to the default branch ref to scan |
+| `match-any` | Array of trigger filters — first one to match wins. Schedule-driven scans use synthetic webhook events. |
+| `use-inputs` | **Minimal** — no entry-point id is needed for a whole-repo scan, so this can be empty. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block |
+
 ### GitHub
 
 ```json
 {
   "name": "github-package-upgrade-scan",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "repository.default_branch"
+  },
   "match-any": [
     {
       "name": "github-package-upgrade-scheduled",
@@ -255,19 +287,17 @@ There is no label-based trigger for this agent. The cadence (and optional manual
       "rule": "event_type=='workflow_dispatch'&&inputs.scanner=='package-upgrade'"
     }
   ],
-  "use-inputs": [
-    { "name": "repository-url",  "value": "repository.clone_url" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "default-branch",  "value": "repository.default_branch" },
-    { "name": "platform",        "value": "github", "constant": true }
-  ],
+  "use-inputs": [],
   "use-plugins": [
     {
       "plugin-name": "package-dependency-upgrade-agent@xianix-plugins-official",
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are running the Package Dependency Upgrade Agent on the repository {{repository-name}} (default branch: {{default-branch}}).\n\nRun /package-upgrade-scan to analyze dependencies, propose upgrades, and open a pull request with the recommendations. The `gh` CLI is authenticated and available."
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Scheduled Package Dependency Upgrade scan for {{repository-name}} (default branch: {{git-ref}}).\n\nRun /package-upgrade-scan to analyze dependencies, propose upgrades, and open a pull request with the recommendations."
 }
 ```
 
@@ -276,6 +306,11 @@ There is no label-based trigger for this agent. The cadence (and optional manual
 ```json
 {
   "name": "azuredevops-package-upgrade-scan",
+  "platform": "azuredevops",
+  "repository": {
+    "url": "resource.repository.remoteUrl",
+    "ref": "resource.repository.defaultBranch"
+  },
   "match-any": [
     {
       "name": "azuredevops-package-upgrade-scheduled",
@@ -286,21 +321,23 @@ There is no label-based trigger for this agent. The cadence (and optional manual
       "rule": "eventType=='ms.vss-pipelines.run-state-changed-event'&&resource.pipeline.name=='package-upgrade-scan'"
     }
   ],
-  "use-inputs": [
-    { "name": "repository-url",  "value": "resource.repository.remoteUrl" },
-    { "name": "repository-name", "value": "resource.repository.name" },
-    { "name": "default-branch",  "value": "resource.repository.defaultBranch" },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
-  ],
+  "use-inputs": [],
   "use-plugins": [
     {
       "plugin-name": "package-dependency-upgrade-agent@xianix-plugins-official",
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "execute-prompt": "You are running the Package Dependency Upgrade Agent on the repository {{repository-name}} (default branch: {{default-branch}}).\n\nRun /package-upgrade-scan to analyze dependencies, propose upgrades, and open a pull request with the recommendations. The `az` CLI is authenticated and available."
+  "with-envs": [
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "Scheduled Package Dependency Upgrade scan for {{repository-name}} (default branch: {{git-ref}}).\n\nRun /package-upgrade-scan to analyze dependencies, propose upgrades, and open a pull request with the recommendations."
 }
 ```
+
+:::tip[Private registries]
+If your repos pull from private package indexes, add `NPM-TOKEN` / `PIP-INDEX-URL` (or any equivalent registry credential) as additional `with-envs` entries on the rule alongside the platform token.
+:::
 
 :::note
 These blocks go inside the `executions` array of a rule set. See [Rules Configuration](/agent-configuration/rules/) for the full file structure and filter syntax.

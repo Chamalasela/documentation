@@ -76,20 +76,31 @@ The platform (GitHub, Azure DevOps, etc.) is **auto-detected** from `git remote`
 
 ## Environment Variables
 
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
 | Variable | Platform | Required | Purpose |
 |---|---|---|---|
-| `GITHUB_TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR data and posting comments |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR data and posting comments |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for REST API calls and git push |
 
 ### GitHub Token Permissions
 
-The `GITHUB_TOKEN` requires the following repository permissions:
+The `GITHUB-TOKEN` requires the following repository permissions:
 
 | Permission | Access | Why it's needed |
 |---|---|---|
 | **Contents** | Read | Access repository contents, commits, branches, downloads, releases, and merges |
 | **Metadata** | Read | Search repositories, list collaborators, and access repository metadata |
 | **Pull requests** | Read & Write | Fetch pull request diffs and context, post review comments, and access related assignees, labels, milestones, and merges |
+
+### Azure DevOps Token Permissions
+
+The `AZURE-DEVOPS-TOKEN` (Personal Access Token) requires:
+
+| Permission | Access | Why it's needed |
+|---|---|---|
+| **Code** | Read & Write | Fetch PR diffs and metadata, push fix commits when `--fix` is used |
+| **Pull Request Threads** | Read & Write | Post and edit the review comment / threads on the PR |
 
 ---
 
@@ -113,30 +124,50 @@ Add one (or both) of the execution blocks below to your `rules.json` so the Xian
 
 ### When does the agent trigger?
 
-The PR Reviewer is **tag-driven**. It runs when the `ai-dlc/pr/pr-review` label (GitHub) or tag (Azure DevOps) is present on a pull request and one of the following happens (OR logic across `match-any` entries):
+The PR Reviewer is mainly **tag-driven**. It runs when the `ai-dlc/pr/pr-review` label (GitHub) or tag (Azure DevOps) is present on a pull request and one of the scenarios below fires (OR logic across `match-any` entries). On Azure DevOps there is also a **reviewer-assignment** trigger so you can request a review by adding `xianix-agent@99x.io` as a PR reviewer instead of tagging.
 
 | Scenario | What it covers |
 |---|---|
-| Tag newly applied to a PR | A human (or another rule) adds `ai-dlc/pr/pr-review` to an open PR |
-| PR opened with the tag already present | A PR is created with the tag included from the start |
-| New commits pushed to a tagged PR | The PR branch is updated while the tag is still on the PR |
-
-There is no longer any reviewer-assignment based trigger. The label or tag is the single source of truth for "review this PR."
+| PR opened / created with the tag already present | A PR is opened with the tag included from the start |
+| New commits pushed to a tagged PR | The PR source branch is updated while the tag is still on the PR |
+| Tag newly applied to a PR (GitHub only) | A human (or another rule) adds `ai-dlc/pr/pr-review` to an open PR |
+| Agent added as a reviewer (Azure DevOps only) | `xianix-agent@99x.io` is added to the PR's reviewer list |
 
 | Platform | Scenario | Webhook event | Filter rule |
 |---|---|---|---|
-| GitHub | Tag newly applied | `pull_request` | `action==labeled` and the just-added `label.name=='ai-dlc/pr/pr-review'` |
+| GitHub | Tag newly applied | `pull_request` | `action==labeled` and `label.name=='ai-dlc/pr/pr-review'` |
 | GitHub | PR opened with tag | `pull_request` | `action==opened` and `ai-dlc/pr/pr-review` is in `pull_request.labels` |
 | GitHub | New commits to tagged PR | `pull_request` | `action==synchronize` and `ai-dlc/pr/pr-review` is in `pull_request.labels` |
-| Azure DevOps | Tag newly applied | `git.pullrequest.updated` | `message.text` contains `tagged the pull request` and `ai-dlc/pr/pr-review` is in `resource.labels` |
 | Azure DevOps | PR created with tag | `git.pullrequest.created` | `ai-dlc/pr/pr-review` is in `resource.labels` |
-| Azure DevOps | New commits to tagged PR | `git.pullrequest.updated` | `message.text` contains `updated the source branch` and `ai-dlc/pr/pr-review` is in `resource.labels` |
+| Azure DevOps | New commits to tagged PR | `git.pullrequest.updated` | `ai-dlc/pr/pr-review` is in `resource.labels` and `message.text` contains `updated the source branch` |
+| Azure DevOps | Agent added as reviewer | `git.pullrequest.updated` | `message.text` contains `changed the reviewer list` and `xianix-agent@99x.io` is in `resource.reviewers` |
+
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+|---|---|
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` or `"azuredevops"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`, `resource.repository.remoteUrl`) |
+| `repository.ref` | Webhook path to the branch ref (e.g. `pull_request.head.ref`, `resource.sourceRefName`) |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `pr-link`, `pr-number`). The repository URL and ref are injected automatically from the `repository` block. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block, plus any `name` from `use-inputs` |
 
 ### GitHub
 
 ```json
 {
   "name": "github-pull-request-review",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "pull_request.head.ref"
+  },
   "match-any": [
     {
       "name": "github-pr-tag-applied",
@@ -152,12 +183,7 @@ There is no longer any reviewer-assignment based trigger. The label or tag is th
     }
   ],
   "use-inputs": [
-    { "name": "pr-number",       "value": "number" },
-    { "name": "repository-url",  "value": "repository.clone_url" },
-    { "name": "repository-name", "value": "repository.full_name" },
-    { "name": "pr-title",        "value": "pull_request.title" },
-    { "name": "pr-head-branch",  "value": "pull_request.head.ref" },
-    { "name": "platform",        "value": "github", "constant": true }
+    { "name": "pr-link", "value": "pull_request.url" }
   ],
   "use-plugins": [
     {
@@ -166,9 +192,9 @@ There is no longer any reviewer-assignment based trigger. The label or tag is th
     }
   ],
   "with-envs": [
-    { "name": "PR_REVIEWER_BLOCK_ON_CRITICAL", "value": "false", "constant": true }
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
   ],
-  "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{pr-head-branch}}).\n\nRun /code-review to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
+  "execute-prompt": "You are reviewing pull request {{pr-link}}. Run /pr-review to perform the automated review."
 }
 ```
 
@@ -177,27 +203,27 @@ There is no longer any reviewer-assignment based trigger. The label or tag is th
 ```json
 {
   "name": "azuredevops-pull-request-review",
+  "platform": "azuredevops",
+  "repository": {
+    "url": "resource.repository.remoteUrl",
+    "ref": "resource.sourceRefName"
+  },
   "match-any": [
-    {
-      "name": "azuredevops-pr-tag-applied",
-      "rule": "eventType==git.pullrequest.updated&&message.text*='tagged the pull request'&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
-    },
     {
       "name": "azuredevops-pr-created-with-tag",
       "rule": "eventType==git.pullrequest.created&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
     },
     {
       "name": "azuredevops-pr-source-branch-updated-with-tag",
-      "rule": "eventType==git.pullrequest.updated&&message.text*='updated the source branch'&&resource.labels.*.name=='ai-dlc/pr/pr-review'"
+      "rule": "eventType==git.pullrequest.updated&&resource.labels.*.name=='ai-dlc/pr/pr-review'&&message.text*='updated the source branch'"
+    },
+    {
+      "name": "azuredevops-pr-agent-added-as-reviewer",
+      "rule": "eventType==git.pullrequest.updated&&message.text*='changed the reviewer list'&&resource.reviewers.*.uniqueName=='xianix-agent@99x.io'"
     }
   ],
   "use-inputs": [
-    { "name": "pr-number",       "value": "resource.pullRequestId" },
-    { "name": "repository-url",  "value": "resource.repository.remoteUrl" },
-    { "name": "repository-name", "value": "resource.repository.name" },
-    { "name": "pr-title",        "value": "resource.title" },
-    { "name": "pr-head-branch",  "value": "resource.sourceRefName" },
-    { "name": "platform",        "value": "azuredevops", "constant": true }
+    { "name": "pr-number", "value": "resource.pullRequestId" }
   ],
   "use-plugins": [
     {
@@ -206,9 +232,9 @@ There is no longer any reviewer-assignment based trigger. The label or tag is th
     }
   ],
   "with-envs": [
-    { "name": "PR_REVIEWER_BLOCK_ON_CRITICAL", "value": "false", "constant": true }
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
   ],
-  "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{pr-head-branch}}).\n\nRun /code-review to perform the automated review. The `az` CLI is authenticated and available if you need it directly."
+  "execute-prompt": "You are reviewing pull request #{{pr-number}} in the repository {{repository-name}} (branch: {{git-ref}}).\n\nRun /pr-review to perform the automated review."
 }
 ```
 

@@ -25,11 +25,11 @@ flowchart TD
     G --> H
     H -- Yes --> I[Skip browser install]
     H -- No --> J[Install Chromium]
-    I --> K[Generate Playwright script]
+    I --> K[Resolve playwright-cli and write _wat_pcli wrapper]
     J --> K
-    K --> L[Run tests in one headless session]
-    L --> M[Parse JSON step results]
-    M --> N[Clean temporary files]
+    K --> L[Open browser session and execute steps adaptively]
+    L --> M[Track step results inline]
+    M --> N[Close browser and clean temporary files]
     N --> O[Post structured execution report]
 ```
 
@@ -37,7 +37,7 @@ flowchart TD
 2. **Find test URL** - searches for a testable URL (for example `Preview URL:` or `Staging URL:`). If none is found, it posts a comment and stops.
 3. **Find or generate test plan** - uses an existing structured plan from comments, or generates one from context and posts it first.
 4. **Prepare Playwright** - reuses cached Chromium if available; installs once when needed.
-5. **Execute steps** - runs one generated Playwright script in a single headless browser session, with retry handling for transient failures.
+5. **Execute steps** - executes steps one at a time using playwright-cli in a persistent headless browser session — reads a live DOM snapshot after each command to verify the outcome and adapt the next step, with retry logic for transient failures.
 6. **Publish report** - posts one structured test execution report back to the PR or issue.
 
 ---
@@ -82,7 +82,7 @@ Platform is currently **GitHub**.
 |---|---|
 | PASSED | Step executed and expected outcome observed |
 | FAILED | Step executed but expected outcome not observed |
-| BLOCKED | Step could not execute after retries, or was skipped due to read-only safety mode |
+| BLOCKED | Step could not execute after retries, was skipped due to read-only safety mode, or was halted by an auth gate with no credentials available |
 
 Overall result is:
 
@@ -125,7 +125,7 @@ claude --plugin-dir /path/to/xianix-plugins-official/plugins/web-app-tester
 /test-web-app pr 42
 ```
 
-For setup details (Node.js and `gh` CLI), see the plugin setup guide in the repository:
+For setup details (Node.js, playwright-cli, and `gh` CLI), see the plugin setup guide in the repository:
 
 <https://github.com/xianix-team/plugins-official/tree/main/plugins/web-app-tester/docs/setup.md>
 
@@ -139,5 +139,5 @@ For setup details (Node.js and `gh` CLI), see the plugin setup guide in the repo
 | `agents/orchestrator.md` | End-to-end orchestration flow |
 | `providers/github.md` | GitHub fetch/post operations |
 | `styles/report-template.md` | Strict output report format |
-| `hooks/validate-prerequisites.sh` | Node.js and `gh` availability checks |
+| `hooks/validate-prerequisites.sh` | Node.js, playwright-cli, and `gh` availability checks |
 | `docs/setup.md` | Installation and auth setup |

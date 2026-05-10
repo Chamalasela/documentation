@@ -5,9 +5,13 @@ description: Automated web app behavior verification for GitHub pull requests an
 
 The **Web App Tester** plugin validates web app behavior for a GitHub pull request or issue by running browser-based checks with **Playwright** in headless Chromium.
 
-It is **PR/Issue-driven**: point it to a PR or issue, it discovers a testable preview URL from discussion content, finds (or generates) a test plan, executes the steps in a single browser session, and posts a structured results comment.
+| Phase | What it does |
+| --- | --- |
+| **Gather context** | Fetches PR/issue content, finds the test URL, and retrieves or generates a test plan |
+| **Run Playwright** | Opens a headless session, executes steps adaptively with retries, and captures screenshots |
+| **Post report** | Computes the verdict and posts a structured execution report as a GitHub comment |
 
-Single command: **`/test-web-app`**
+Works with **GitHub**.
 
 ---
 
@@ -33,24 +37,24 @@ flowchart TD
     N --> O[Post structured execution report]
 ```
 
-1. **Gather context** - reads PR or issue title/body, comments, and linked references through `gh` CLI.
-2. **Find test URL** - searches for a testable URL (for example `Preview URL:` or `Staging URL:`). If none is found, it posts a comment and stops.
-3. **Find or generate test plan** - uses an existing structured plan from comments, or generates one from context and posts it first.
-4. **Prepare Playwright** - reuses cached Chromium if available; installs once when needed.
-5. **Execute steps** - executes steps one at a time using playwright-cli in a persistent headless browser session — reads a live DOM snapshot after each command to verify the outcome and adapt the next step, with retry logic for transient failures.
-6. **Publish report** - posts one structured test execution report back to the PR or issue.
+1. **Gather context** — reads PR or issue title/body, comments, and linked references through `gh` CLI.
+2. **Find test URL** — searches for a testable URL (for example `Preview URL:` or `Staging URL:`). If none is found, it posts a comment and stops.
+3. **Find or generate test plan** — uses an existing structured plan from comments, or generates one from context and posts it first.
+4. **Prepare Playwright** — reuses cached Chromium if available; installs once when needed.
+5. **Execute steps** — executes steps one at a time using playwright-cli in a persistent headless browser session — reads a live DOM snapshot after each command to verify the outcome and adapt the next step, with retry logic for transient failures.
+6. **Publish report** — posts one structured test execution report back to the PR or issue.
 
 ---
 
 ## Inputs
 
 | Input | Source | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Target ID | Command argument | Yes | PR number (`pr 42`) or issue number (`issue 88`) |
 | Test URL | PR/issue content | Yes | URL marked as preview/staging/test environment |
 | Test plan | PR/issue content | No | Numbered or bulleted verification steps; generated if missing |
 
-Platform is currently **GitHub**.
+The platform is currently **GitHub**.
 
 ---
 
@@ -76,10 +80,31 @@ Platform is currently **GitHub**.
 
 ---
 
+## Environment Variables
+
+The Xianix Agent reads these from its secrets store and injects them at runtime via the rule's `with-envs` block (see the rule examples below). For local CLI use, export them in your shell.
+
+| Variable | Platform | Required | Purpose |
+| --- | --- | --- | --- |
+| `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR/issue data and posting comments |
+
+### GitHub Token Permissions
+
+The `GITHUB-TOKEN` requires the following repository permissions:
+
+| Permission | Access | Why it's needed |
+| --- | --- | --- |
+| **Contents** | Read | Access repository contents |
+| **Metadata** | Read | Search repositories and access repository metadata |
+| **Pull requests** | Read & Write | Fetch pull request context and post test execution reports |
+| **Issues** | Read & Write | Fetch issue context and post test execution reports |
+
+---
+
 ## Execution Statuses
 
 | Status | Meaning |
-|---|---|
+| --- | --- |
 | PASSED | Step executed and expected outcome observed |
 | FAILED | Step executed but expected outcome not observed |
 | BLOCKED | Step could not execute after retries, was skipped due to read-only safety mode, or was halted by an auth gate with no credentials available |
@@ -125,16 +150,92 @@ claude --plugin-dir /path/to/xianix-plugins-official/plugins/web-app-tester
 /test-web-app pr 42
 ```
 
+Or trigger it automatically via the Xianix Agent by adding a rule — see the examples below and the [Rules Configuration](/agent-configuration/rules/) guide.
+
 For setup details (Node.js, playwright-cli, and `gh` CLI), see the plugin setup guide in the repository:
 
 <https://github.com/xianix-team/plugins-official/tree/main/plugins/web-app-tester/docs/setup.md>
 
 ---
 
+## Rule Examples
+
+Add the execution block below to your `rules.json` so the Xianix Agent automatically tests web apps when a webhook fires.
+
+### When does the agent trigger?
+
+The Web App Tester is mainly **tag-driven**. It runs when the `ai-dlc/pr/test-web-app` label is present on a pull request and one of the scenarios below fires (OR logic across `match-any` entries).
+
+| Scenario | What it covers |
+| --- | --- |
+| PR opened / created with the tag already present | A PR is opened with the tag included from the start |
+| New commits pushed to a tagged PR | The PR source branch is updated while the tag is still on the PR |
+| Tag newly applied to a PR | A human (or another rule) adds `ai-dlc/pr/test-web-app` to an open PR |
+
+| Platform | Scenario | Webhook event | Filter rule |
+| --- | --- | --- | --- |
+| GitHub | Tag newly applied | `pull_request` | `action==labeled` and `label.name=='ai-dlc/pr/test-web-app'` |
+| GitHub | PR opened with tag | `pull_request` | `action==opened` and `ai-dlc/pr/test-web-app` is in `pull_request.labels` |
+| GitHub | New commits to tagged PR | `pull_request` | `action==synchronize` and `ai-dlc/pr/test-web-app` is in `pull_request.labels` |
+
+### Execution-block shape
+
+Each execution block in `rules.json` follows this top-level shape:
+
+| Field | Purpose |
+| --- | --- |
+| `name` | Human-readable id for the execution |
+| `platform` | `"github"` — drives which provider the plugin uses |
+| `repository.url` | Webhook path to the repository URL (e.g. `repository.clone_url`) |
+| `repository.ref` | Webhook path to the branch ref (e.g. `pull_request.head.ref`) |
+| `match-any` | Array of trigger filters — first one to match wins |
+| `use-inputs` | **Minimal** — usually just the entry-point id (e.g. `pr-number`). The repository URL and ref are injected automatically from the `repository` block. |
+| `use-plugins` | The plugin to invoke |
+| `with-envs` | Required environment variables, sourced from the agent's `secrets.*` store and marked `mandatory: true` |
+| `execute-prompt` | The prompt sent to the agent. Implicit interpolations: `{{repository-name}}` and `{{git-ref}}` from the `repository` block, plus any `name` from `use-inputs` |
+
+### GitHub
+
+```json
+{
+  "name": "github-web-app-test",
+  "platform": "github",
+  "repository": {
+    "url": "repository.clone_url",
+    "ref": "pull_request.head.ref"
+  },
+  "match-any": [
+    {
+      "name": "github-pr-tag-applied",
+      "rule": "action==labeled&&label.name=='ai-dlc/pr/test-web-app'"
+    }
+  ],
+  "use-inputs": [
+    { "name": "pr-number", "value": "pull_request.number" }
+  ],
+  "use-plugins": [
+    {
+      "plugin-name": "web-app-tester@xianix-plugins-official",
+      "marketplace": "xianix-team/plugins-official"
+    }
+  ],
+  "with-envs": [
+    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+  ],
+  "execute-prompt": "You are testing pull request {{pr-number}}. Run /test-web-app pr {{pr-number}} to perform the automated web app test."
+}
+```
+
+:::note
+These blocks go inside the `executions` array of a rule set. See [Rules Configuration](/agent-configuration/rules/) for the full file structure and filter syntax.
+:::
+
+---
+
 ## What Is Included
 
 | Path | Purpose |
-|---|---|
+| --- | --- |
 | `commands/test-web-app.md` | Entry command and argument pattern |
 | `agents/orchestrator.md` | End-to-end orchestration flow |
 | `providers/github.md` | GitHub fetch/post operations |

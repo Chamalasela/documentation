@@ -103,7 +103,7 @@ The Xianix Agent reads these from its secrets store and injects them at runtime 
 | Variable | Platform | Required | Purpose |
 | --- | --- | --- | --- |
 | `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR/issue data and posting comments |
-| `AZURE_DEVOPS_TOKEN` | Azure DevOps | Yes | PAT for the ADO REST API — reading PRs/work items and posting comments |
+| `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for the ADO REST API — reading PRs/work items and posting comments |
 
 ### GitHub Token Permissions
 
@@ -277,7 +277,7 @@ Each execution block in `rules.json` follows this top-level shape:
     }
   ],
   "with-envs": [
-    { "name": "AZURE_DEVOPS_TOKEN", "value": "secrets.AZURE_DEVOPS_TOKEN", "mandatory": true }
+    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
   ],
   "execute-prompt": "You are testing pull request {{pr-number}}. Run /test-web-app pr {{pr-number}} to perform the automated web app test."
 }

@@ -6,7 +6,7 @@ description: Get the Xianix Agent running from scratch in a few minutes.
 This guide takes you from zero to a working AI-DLC agent — such as automated PR review — on your repository in just a few steps. It assumes you already have a Xianix Agent deployed on a Xians instance. If you're on a 99x team using [Agentri](https://agentri.ai/), an agent is already available for you.
 
 :::tip[Before you begin]
-Make sure you have everything listed in the [Prerequisites](./prerequisites) page ready to go.
+Make sure you have everything listed in the [Prerequisites](/agent-configuration/prerequisites) page ready to go.
 :::
 
 ## 1. Activate the agent in your tenant
@@ -31,12 +31,12 @@ Xians generates a unique webhook URL — you'll add this to your Git repository 
 
 Connect the webhook to the Git provider that hosts your repository:
 
-- [Azure DevOps setup guide](./azure-devops.md)
-- [GitHub setup guide](./github.md)
+- [Azure DevOps setup guide](/agent-configuration/azure-devops)
+- [GitHub setup guide](/agent-configuration/github)
 
 Once the webhook is in place, the agent will begin responding to the configured events (e.g. new pull requests) automatically.
 
 ## Next steps
 
-- [Configure agent rules](./rules) to tailor the agent's behavior to your team's workflow.
-- Explore the full list of [available plugins](/documentation/plugins/overview/) to see what else the agent can do.
+- [Configure agent rules](/agent-configuration/rules) to tailor the agent's behavior to your team's workflow.
+- Explore the full list of [available plugins](/agent-configuration/overview) to see what else the agent can do.

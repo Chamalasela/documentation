@@ -31,11 +31,17 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
           "url": "...",
           "ref": "..."
         },
-        "match-any":  [ ... ],
-        "use-inputs": [ ... ],
-        "use-plugins":[ ... ],
-        "with-envs":  [ ... ],
-        "execute-prompt": "..."
+        "match-any":        [ ... ],
+        "use-inputs":       [ ... ],
+        "use-plugins":      [ ... ],
+        "with-envs":        [ ... ],
+        "model":            "...",
+        "max-turns":        40,
+        "allowed-tools":    [ ... ],
+        "disallowed-tools": [ ... ],
+        "max-budget-usd":   1.00,
+        "resume-sessions":  false,
+        "execute-prompt":   "..."
       }
     ]
   }
@@ -49,6 +55,12 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
 | `platform` *(per execution, optional)* | Hosting service the run targets (`github`, `azuredevops`, …). Structural — describes *where* the run happens, independent of the plugin. See [§ 1b](#1b-platform--repository--structural-execution-context). |
 | `repository` *(per execution, optional)* | Structural binding for the repository being operated on. Each declared sub-field (`url`, `ref`) accepts either a JSON path (resolved against the payload) or a constant via `{ "value": "...", "constant": true }`. Auto-resolved values are exposed to plugins as `{{repository-url}}` / `{{repository-name}}` / `{{git-ref}}`; **`{{repository-name}}` is derived from `url`, never authored**. Omit the whole block for executions that don't operate on a repo. See [§ 1b](#1b-platform--repository--structural-execution-context). |
 | `with-envs` *(per execution, optional)* | Container env vars injected before the prompt runs. Each entry **must** declare its source explicitly: `secrets.KEY` (tenant Secret Vault), `host.NAME` (agent process env), or a literal with `"constant": true`. Bare names and unknown prefixes fail the activation. See [§ 5](#5-with-envs--container-environment-variables). |
+| `model` *(per execution, optional)* | Claude model this block runs on (e.g. `claude-haiku-4-5`, `claude-sonnet-4-5`). Omit to use the executor default. See [§ 7](#7-cost--execution-controls). |
+| `max-turns` *(per execution, optional)* | Hard cap on agent turns — the run aborts once this many tool-use round-trips complete. See [§ 7](#7-cost--execution-controls). |
+| `allowed-tools` *(per execution, optional)* | List of tool names auto-approved without a permission prompt. Does not restrict which tools are available; use `disallowed-tools` to block tools entirely. See [§ 7](#7-cost--execution-controls). |
+| `disallowed-tools` *(per execution, optional)* | List of tool names (or scoped patterns like `"Bash(rm *)"`) to remove from the agent's context. See [§ 7](#7-cost--execution-controls). |
+| `max-budget-usd` *(per execution, optional)* | Hard USD spend cap per run. The SDK aborts the run once this threshold is crossed. See [§ 7](#7-cost--execution-controls). |
+| `resume-sessions` *(per execution, optional)* | When `true`, back-to-back runs on the same conversation (same repo + PR/issue) resume the prior Claude Code session. Best-effort — a missing session falls back to a fresh run. See [§ 7](#7-cost--execution-controls). |
 
 Each execution block that passes its `match-any` filters is scheduled independently when multiple blocks match the same payload.
 
@@ -586,14 +598,128 @@ Placeholders are replaced case-insensitively. Any `{{name}}` with no matching in
 
 ---
 
+## 7. Cost & Execution Controls
+
+Six optional fields on every execution block let you tune cost, speed, and safety — from picking a cheaper model to hard-capping spend. All are omitted by default so existing rules work unchanged.
+
+```json
+{
+  "model":            "claude-haiku-4-5",
+  "max-turns":        40,
+  "allowed-tools":    ["Read", "Grep", "Bash"],
+  "disallowed-tools": ["WebSearch", "WebFetch"],
+  "max-budget-usd":   1.00,
+  "resume-sessions":  true
+}
+```
+
+### `model` — Model selection
+
+Route a block to a specific Claude model. Omit to use the executor's configured default (Sonnet-class).
+
+```json
+"model": "claude-haiku-4-5"
+```
+
+Use a cheaper model for mechanical tasks (requirement analysis, simple summaries) and the full Sonnet for deep reasoning (PR reviews, architecture decisions):
+
+```json
+{ "name": "github-issue-triage",        "model": "claude-haiku-4-5",   ... }
+{ "name": "github-pull-request-review", "model": "claude-sonnet-4-5",  ... }
+```
+
+> Regardless of the main model, Claude Code's internal background work (session titles, mini-summaries) is always routed to a Haiku-class model by the executor — you don't need to configure that separately.
+
+### `max-turns` — Turn cap
+
+Limits the number of tool-use round-trips the agent is allowed. Once the cap is reached the run completes with whatever the agent produced up to that point.
+
+```json
+"max-turns": 40
+```
+
+The container wall-clock timeout (`CONTAINER-EXECUTION-TIMEOUT-SECONDS`) is always the final backstop. `max-turns` is a token backstop that fires *before* the clock runs out, preventing runaway loops on complex repos.
+
+A host-wide opt-in default can be set via `EXECUTOR-DEFAULT-MAX-TURNS` in the agent `.env` — this applies to every run that doesn't set its own `max-turns`.
+
+### `allowed-tools` and `disallowed-tools` — Tool control
+
+These two fields work differently and serve different purposes:
+
+| Field | Effect |
+|-------|--------|
+| `allowed-tools` | Auto-approves the listed tools (no permission prompt). Unlisted tools are still available and fall through to the executor's `bypassPermissions` mode. |
+| `disallowed-tools` | Removes the listed tools from the agent's context entirely. The agent cannot see or use them. |
+
+> **Restriction requires `disallowed-tools`.** Because the executor runs in `bypassPermissions` mode, `allowed-tools` alone does not restrict anything — every tool is already approved. To actually block a tool, add it to `disallowed-tools`.
+
+```json
+"disallowed-tools": ["WebSearch", "WebFetch"]
+```
+
+You can also scope a denial to a pattern within a tool rather than blocking it entirely. A bare name blocks the whole tool; a scoped form like `"Bash(rm *)"` only blocks calls that match the pattern:
+
+```json
+"disallowed-tools": ["WebSearch", "Bash(rm *)"]
+```
+
+### `max-budget-usd` — Spend cap
+
+Hard USD cap per run, passed to the Claude Code SDK. The run is aborted by the SDK once cumulative token spend crosses this threshold.
+
+```json
+"max-budget-usd": 1.50
+```
+
+The configured budget and an over-budget flag are recorded in metrics, so you can chart how often a block is hitting its cap and tune accordingly.
+
+### `resume-sessions` — Session reuse
+
+When `true`, the executor persists the Claude Code session ID on the tenant volume after each run and resumes it on the next run against the same conversation (same repo + PR or issue number). This means the agent remembers what it read and did on the previous review instead of rediscovering the codebase from scratch.
+
+```json
+"resume-sessions": true
+```
+
+This is most valuable for bursty flows — a PR that receives multiple pushes in quick succession, or an issue that gets re-analysed after a comment. On the first run (or when no prior session is found) a fresh session starts automatically, so the flag is always safe to set.
+
+> **Best-effort.** A missing or expired session silently falls back to a fresh run — the flag never causes a failure.
+
+### Cached repository context (`CLAUDE.md` + symbol map)
+
+Independent of the per-block fields above, the executor prepares a cached orientation for every repo so the agent doesn't re-explore the codebase cold on every run — the single biggest avoidable token sink. Two artifacts are built **deterministically** (no LLM cost) from the checked-out code and cached on the tenant volume, keyed by the branch HEAD (so they're rebuilt only when HEAD moves):
+
+- **`CLAUDE.md`** — project overview, detected stack/commands, top-level layout, and a pointer to the symbol map. Claude Code auto-loads `CLAUDE.md` from the working directory.
+- **`.xianix/repomap.txt`** — a compact file→symbol map (functions/classes per file) so the agent can locate code by symbol instead of grepping.
+
+> **Your `CLAUDE.md` always wins.** If your repository already ships a `CLAUDE.md`, the executor leaves it completely untouched — nothing is overwritten or appended — and the optional LLM pass below is skipped.
+
+**Optional hybrid narrative (host opt-in).** When the operator enables it (host `EXECUTOR-CONTEXT-LLM=1`, or per rule-set via an `XIANIX-CONTEXT-LLM` entry in `with-envs`), a cheap, turn- and time-capped Haiku pass appends an **Architecture & conventions** narrative to the generated `CLAUDE.md` — the *why* the deterministic facts can't capture. It runs at most once per HEAD change (on a cache miss), so its cost is amortised across every later run that reuses the cache, and any failure silently falls back to the deterministic-only `CLAUDE.md`.
+
+### Field reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | *(executor default)* | Claude model name (e.g. `claude-haiku-4-5`, `claude-sonnet-4-5`). |
+| `max-turns` | integer | *(none)* | Maximum agent turns before the run completes. |
+| `allowed-tools` | string array | `[]` | Tools to auto-approve (does not restrict). |
+| `disallowed-tools` | string array | `[]` | Tools to remove from the agent's context. Accepts bare names (`"WebSearch"`) or scoped patterns (`"Bash(rm *)"`). |
+| `max-budget-usd` | number | *(none)* | USD spend cap; run aborted by the SDK once crossed. |
+| `resume-sessions` | boolean | `false` | Resume the prior session for this conversation (repo + PR/issue). |
+
+---
+
 ## Complete Example
 
-A rule set with one execution that reviews newly opened GitHub pull requests:
+A rule set with two executions — a Sonnet-powered PR review with a spend cap and session reuse, plus a Haiku-powered issue analysis with a turn cap:
 
 ```json
 [
   {
     "webhook": "Default",
+    "with-envs": [
+      { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+    ],
     "executions": [
       {
         "name": "github-pull-request-review",
@@ -603,7 +729,8 @@ A rule set with one execution that reviews newly opened GitHub pull requests:
           "ref": "pull_request.head.ref"
         },
         "match-any": [
-          { "name": "pr-opened-event", "rule": "action==opened" }
+          { "name": "pr-opened",       "rule": "action==opened" },
+          { "name": "pr-synchronize",  "rule": "action==synchronize&&pull_request.labels.*.name=='ai-dlc/pr/pr-review'" }
         ],
         "use-inputs": [
           { "name": "pr-number", "value": "number",             "mandatory": true },
@@ -615,10 +742,34 @@ A rule set with one execution that reviews newly opened GitHub pull requests:
             "marketplace": "xianix-team/plugins-official"
           }
         ],
-        "with-envs": [
-          { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
+        "model":            "claude-sonnet-4-5",
+        "max-turns":        60,
+        "disallowed-tools": ["WebSearch", "WebFetch"],
+        "max-budget-usd":   2.50,
+        "resume-sessions":  true,
+        "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{git-ref}}).\n\nRun /pr-review to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
+      },
+      {
+        "name": "github-issue-requirement-analysis",
+        "platform": "github",
+        "repository": {
+          "url": "repository.clone_url"
+        },
+        "match-any": [
+          { "name": "issue-labeled", "rule": "action==labeled&&label.name=='ai-dlc/issue/analyze'" }
         ],
-        "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{git-ref}}).\n\nRun /code-review to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
+        "use-inputs": [
+          { "name": "issue-number", "value": "issue.number", "mandatory": true }
+        ],
+        "use-plugins": [
+          {
+            "plugin-name": "req-analyst@xianix-plugins-official",
+            "marketplace": "xianix-team/plugins-official"
+          }
+        ],
+        "model":     "claude-haiku-4-5",
+        "max-turns": 30,
+        "execute-prompt": "Issue #{{issue-number}} in {{repository-name}} has been assigned for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated analysis."
       }
     ]
   }
@@ -704,4 +855,5 @@ Only run the workflow for pull requests targeting a `release/` branch:
 4. `use-inputs` are resolved from the payload, and the resolved structural values are auto-injected back into the inputs dict under the canonical keys `platform` / `repository-url` / `git-ref`. The short `repository-name` (e.g. `owner/repo`) is **derived** from `repository-url` (platform-aware: handles GitHub, Azure DevOps `_git` URLs, etc.) and injected alongside them so prompts and plugins see a single combined view.
 5. `execute-prompt` is interpolated with those inputs (including the auto-injected structural values).
 6. The agent resolves `with-envs` (literals, `host.*`, `secrets.*`) and injects them into the executor container alongside the runtime values it manages itself (`ANTHROPIC_API_KEY`, etc.).
-7. The executor installs `use-plugins`, `git checkout`s `git-ref` into the per-run worktree (or runs against the bare-clone HEAD when omitted), and runs the final prompt.
+7. **Cost & execution controls are applied** — `model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, and `resume-sessions` are forwarded to the executor as typed env vars (`XIANIX-MODEL`, `XIANIX-MAX-TURNS`, etc.). Any field that is not set is simply not seeded, so the executor falls back to its own defaults — there is no behavioral change for existing rules that don't declare these fields.
+8. The executor installs `use-plugins`, injects a cached `CLAUDE.md` and symbol map into the worktree so the agent doesn't re-explore the codebase from scratch (skipped when the repo ships its own `CLAUDE.md`; optionally enriched with an LLM-authored architecture narrative when `EXECUTOR-CONTEXT-LLM` / `XIANIX-CONTEXT-LLM` is enabled), optionally resumes a prior session (when `resume-sessions: true`), and runs the final prompt with the configured model, turn cap, tool restrictions, and spend cap applied.

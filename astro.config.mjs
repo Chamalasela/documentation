@@ -76,6 +76,7 @@ export default defineConfig({
 					{ label: 'Incident Response', slug: 'official-plugins/incident-response' },
 					{ label: 'Test Strategist', slug: 'official-plugins/test-strategist' },
 					{ label: 'Web App Tester', slug: 'official-plugins/web-app-tester' },
+					{ label: 'Chatbot Tester', slug: 'official-plugins/chatbot-tester' },
 					{ label: 'Code Archaeology Agent', slug: 'official-plugins/code-archaeology-agent' },
 				],
 			},

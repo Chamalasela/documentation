@@ -104,6 +104,7 @@ The Xianix Agent reads these from its secrets store and injects them at runtime 
 | --- | --- | --- | --- |
 | `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching PR/issue data and posting comments |
 | `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for the ADO REST API — reading PRs/work items and posting comments |
+| `ENVIRONMENT` | Both | No | Set to `production` to enable read-only mode — all state-changing steps are skipped and marked BLOCKED |
 
 ### GitHub Token Permissions
 
@@ -132,7 +133,7 @@ Create the token in **User Settings → Personal access tokens** with the follow
 | --- | --- |
 | PASSED | Step executed and expected outcome observed |
 | FAILED | Step executed but expected outcome not observed |
-| BLOCKED | Step could not execute after retries, was skipped due to read-only safety mode, or was halted by an auth gate with no credentials available |
+| BLOCKED | Step could not execute after retries, was skipped because `ENVIRONMENT=production` read-only mode is active, or was halted by an auth gate with no credentials available |
 
 Overall result is:
 
@@ -145,7 +146,7 @@ Overall result is:
 ## Safety Rules
 
 - If no test URL is found, the plugin posts a comment and exits.
-- If the URL appears to be production, the run switches to **read-only mode** and skips state-changing actions.
+- Set `ENVIRONMENT=production` to switch to **read-only mode**, which skips all state-changing actions (destructive test cases are marked BLOCKED).
 - Credentials and tokens are never posted in comments.
 - Temporary files (the `_wat_run/` working directory) are deleted after every run, even if execution fails.
 

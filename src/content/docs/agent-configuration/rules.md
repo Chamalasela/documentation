@@ -3,9 +3,9 @@ title: Rules Configuration
 description: How rules.json controls what the agent does when a webhook arrives.
 ---
 
-`rules.json` is the single configuration surface that controls **what the agent does** when a webhook arrives. Each entry in the JSON array is a self-contained rule set that maps a webhook name to one or more **execution blocks**. Each block independently declares payload filters, input extraction, plugin installation, and a Claude Code prompt template — so a single inbound event can fan out into multiple specialised workflows without any custom code.
+`rules.json` is the single configuration surface that controls **what the agent does** when a webhook arrives — or when a schedule fires. Each entry in the JSON array is a self-contained rule set, keyed by either a webhook name (`webhook`) or a cron schedule (`schedule` + `cron`), that maps to one or more **execution blocks**. Each block independently declares payload filters, input extraction, plugin installation, and a Claude Code prompt template — so a single inbound event (or a recurring tick) can fan out into multiple specialised workflows without any custom code.
 
-If **multiple** execution blocks in the same rule set match one webhook payload, **each** match is scheduled as its own run (separate activation / executor session) with that block's inputs, plugins, and prompt.
+If **multiple** execution blocks in the same rule set match one webhook payload, **each** match is scheduled as its own run (separate activation / executor session) with that block's inputs, plugins, and prompt. `schedule` rule sets have no payload to match against — **every** execution block in the rule set runs on each cron tick. See [§ 8](#8-schedule--cron--time-triggered-rule-sets).
 
 ```
 rules.json  →  WebhookRulesEvaluator  →  EventOrchestrator  →  ProcessingWorkflow  →  Executor Container
@@ -17,7 +17,7 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
 
 ## File Structure
 
-`rules.json` is a JSON array of **rule set** objects. Each rule set targets one **webhook** name (case-insensitive) and contains an **executions** array. Each execution is an independent pipeline: optional filters, inputs, plugins, and prompt.
+`rules.json` is a JSON array of **rule set** objects. Each rule set is triggered either by a **webhook** (`webhook`, a case-insensitive name matched against incoming events) or by a **cron schedule** (`schedule` name + `cron` expression — see [§ 8](#8-schedule--cron--time-triggered-rule-sets)), and contains an **executions** array. Each execution is an independent pipeline: optional filters, inputs, plugins, and prompt.
 
 ```jsonc
 [
@@ -48,13 +48,40 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
 ]
 ```
 
+A `schedule` rule set replaces `webhook` / `match-any` / `use-inputs` with `cron` — there's no incoming payload to filter or extract from (see [§ 8](#8-schedule--cron--time-triggered-rule-sets)):
+
+```jsonc
+[
+  {
+    "schedule": "...",
+    "cron": "*/5 * * * *",
+    "with-envs": [ ... ],
+    "executions": [
+      {
+        "name": "...",
+        "platform": "...",
+        "repository": {
+          "url": "...",
+          "name": "...",
+          "ref": "..."
+        },
+        "use-plugins":    [ ... ],
+        "execute-prompt": "..."
+      }
+    ]
+  }
+]
+```
+
 | Field | Description |
 |-------|-------------|
-| `webhook` | Webhook name from Xians Agent Studio (must match incoming events) |
+| `webhook` | Webhook name from Xians Agent Studio (must match incoming events). Mutually exclusive with `schedule`. |
+| `schedule` | Cron rule set name — the time-triggered analogue of `webhook`, used for logs and skip messages. Mutually exclusive with `webhook`. See [§ 8](#8-schedule--cron--time-triggered-rule-sets). |
+| `cron` | Standard 5-field cron expression (`minute hour day-of-month month day-of-week`) controlling how often a `schedule` rule set's executions run. Only valid alongside `schedule`. |
 | `executions` | One or more execution blocks; optional per-block `name` for logs and skip messages |
 | `platform` *(per execution, optional)* | Hosting service the run targets (`github`, `azuredevops`, …). Structural — describes *where* the run happens, independent of the plugin. See [§ 1b](#1b-platform--repository--structural-execution-context). |
-| `repository` *(per execution, optional)* | Structural binding for the repository being operated on. Each declared sub-field (`url`, `ref`) accepts either a JSON path (resolved against the payload) or a constant via `{ "value": "...", "constant": true }`. Auto-resolved values are exposed to plugins as `{{repository-url}}` / `{{repository-name}}` / `{{git-ref}}`; **`{{repository-name}}` is derived from `url`, never authored**. Omit the whole block for executions that don't operate on a repo. See [§ 1b](#1b-platform--repository--structural-execution-context). |
-| `with-envs` *(per execution, optional)* | Container env vars injected before the prompt runs. Each entry **must** declare its source explicitly: `secrets.KEY` (tenant Secret Vault), `host.NAME` (agent process env), or a literal with `"constant": true`. Bare names and unknown prefixes fail the activation. See [§ 5](#5-with-envs--container-environment-variables). |
+| `repository` *(per execution, optional)* | Structural binding for the repository being operated on. Each declared sub-field (`url`, `ref`) accepts either a JSON path (resolved against the payload) or a constant via `{ "value": "...", "constant": true }`. Auto-resolved values are exposed to plugins as `{{repository-url}}` / `{{repository-name}}` / `{{git-ref}}`; **`{{repository-name}}` is derived from `url`, never authored**. Omit the whole block for executions that don't operate on a repo. See [§ 1b](#1b-platform--repository--structural-execution-context). `schedule` rule sets declare `url` / `ref` (and optionally `name`) as plain literals — see [§ 8](#8-schedule--cron--time-triggered-rule-sets). |
+| `with-envs` *(optional, per execution or per rule set)* | Container env vars injected before the prompt runs. Declare it inside an execution block (sibling to `use-plugins`) to scope it to that execution, or at the rule-set level (sibling to `executions`) to apply to **every** execution in the rule set. Each entry **must** declare its source explicitly: `secrets.KEY` (tenant Secret Vault), `host.NAME` (agent process env), or a literal with `"constant": true`. Bare names and unknown prefixes fail the activation. See [§ 5](#5-with-envs--container-environment-variables). |
 | `model` *(per execution, optional)* | Claude model this block runs on (e.g. `claude-haiku-4-5`, `claude-sonnet-4-5`). Omit to use the executor default. See [§ 7](#7-cost--execution-controls). |
 | `max-turns` *(per execution, optional)* | Hard cap on agent turns — the run aborts once this many tool-use round-trips complete. See [§ 7](#7-cost--execution-controls). |
 | `allowed-tools` *(per execution, optional)* | List of tool names auto-approved without a permission prompt. Does not restrict which tools are available; use `disallowed-tools` to block tools entirely. See [§ 7](#7-cost--execution-controls). |
@@ -112,6 +139,8 @@ Case-insensitive match against the webhook name configured in Xians Agent Studio
 
 Only one rule set per webhook name is used — the **first** matching entry in the `rules.json` array wins.
 
+For a rule set triggered on a recurring timer instead of a webhook, replace `webhook` with `schedule` + `cron` — see [§ 8](#8-schedule--cron--time-triggered-rule-sets).
+
 ---
 
 ## 1b. `platform` & `repository` — Structural Execution Context
@@ -132,7 +161,7 @@ These two execution-level fields describe **what the run operates on** — indep
 | `repository.url`  | string (JSON path) **or** `{ value, constant }` object             | Either a JSON path that resolves to the clone URL (the common webhook-driven case) or a hard-coded literal via the constant form (see [Hard-coding the repository](#hard-coding-the-repository-constant-form)). **Mandatory when declared** — if a declared JSON path doesn't resolve, the execution block is skipped before any container starts. Exposed as `{{repository-url}}`. |
 | `repository.ref`  | string (JSON path) **or** `{ value, constant }` object             | Either a JSON path that resolves to the git ref (branch, commit SHA, or tag), or a constant pinning the run to a fixed branch/tag. **Mandatory when declared.** Omit entirely to run against the bare-clone HEAD. Exposed as `{{git-ref}}` and used directly by `Executor/entrypoint.sh` to position the worktree before the prompt runs. |
 
-> **`{{repository-name}}` is derived, not declared.** A short `owner/repo`-style identifier is computed from the resolved `repository.url` (platform-aware: GitHub, Azure DevOps `_git` URLs, etc.) and auto-injected as `{{repository-name}}`. There is no `repository.name` knob in the schema — clone URL and display name are kept in lockstep so they can never drift. If you need a different display name, pick a different clone URL.
+> **`{{repository-name}}` is derived, not declared.** A short `owner/repo`-style identifier is computed from the resolved `repository.url` (platform-aware: GitHub, Azure DevOps `_git` URLs, etc.) and auto-injected as `{{repository-name}}`. There is no `repository.name` knob in the schema — clone URL and display name are kept in lockstep so they can never drift. If you need a different display name, pick a different clone URL. The one exception is `schedule` rule sets, which may declare `repository.name` explicitly — see [§ 8](#8-schedule--cron--time-triggered-rule-sets).
 
 #### Hard-coding the repository (constant form)
 
@@ -462,7 +491,7 @@ Declares Claude Code marketplace plugins to install in the executor container be
 
 ## 5. `with-envs` — Container Environment Variables
 
-Declares environment variables to inject into the executor container before the prompt runs. Sits at the **execution-block** level (sibling to `use-plugins`) — every variable is available to every plugin and to the prompt itself, regardless of how many plugins consume it.
+Declares environment variables to inject into the executor container before the prompt runs. It can sit at the **execution-block** level (sibling to `use-plugins`) — where every variable is available to every plugin and to the prompt itself, regardless of how many plugins consume it — or at the **rule-set** level (sibling to `executions`), where it's merged into **every** execution block in that rule set. The latter is common for `schedule` rule sets (see [§ 8](#8-schedule--cron--time-triggered-rule-sets)), where credentials are typically the same across the rule set's executions.
 
 ```json
 "with-envs": [
@@ -709,6 +738,95 @@ Independent of the per-block fields above, the executor prepares a cached orient
 
 ---
 
+## 8. `schedule` & `cron` — Time-Triggered Rule Sets
+
+A rule set doesn't have to wait for a webhook. Replace `webhook` with `schedule` (a name for logs and skip messages) and add `cron` to run the rule set's executions on a recurring timer instead:
+
+```json
+{
+  "schedule": "...",
+  "cron": "*/5 * * * *",
+  "with-envs": [ ... ],
+  "executions": [ ... ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `schedule` | Identifies the rule set in logs and skip messages — the cron analogue of `webhook`. |
+| `cron` | Standard 5-field cron expression (`minute hour day-of-month month day-of-week`). Controls how often **every** execution in this rule set runs. |
+
+### No payload → no `match-any` / `use-inputs`
+
+A cron tick carries no webhook payload, so executions in a `schedule` rule set:
+
+- **Omit `match-any`** — there's nothing to filter on, so every execution block in the rule set runs on every tick.
+- **Omit `use-inputs`** — there's no payload to extract values from. The structural placeholders `{{platform}}`, `{{repository-name}}`, and `{{git-ref}}` are still auto-injected and available to `execute-prompt` (see [§ 1b](#1b-platform--repository--structural-execution-context)).
+
+Everything else — `use-plugins`, `with-envs`, the [cost & execution controls](#7-cost--execution-controls) (`model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, `resume-sessions`), and `execute-prompt` — works exactly as it does in `webhook` executions.
+
+### `repository` as plain literals
+
+Without a payload, there's nothing for `repository.url` / `repository.ref` to resolve a JSON path against, so they're written as **plain literal strings** — the same effect as the [constant form](#hard-coding-the-repository-constant-form) (`{ "value": "...", "constant": true }`), just without the wrapper:
+
+```json
+"repository": {
+  "url": "https://github.com/my-org/agent-target.git",
+  "name": "my-org/agent-target",
+  "ref": "main"
+}
+```
+
+`repository.name` *(optional)* explicitly sets `{{repository-name}}`, overriding the value that would otherwise be [derived](#1b-platform--repository--structural-execution-context) from `url`.
+
+### Rule-set-level `with-envs`
+
+`with-envs` declared as a sibling of `executions` (rather than inside an execution block) is merged into every execution in the rule set — see [§ 5](#5-with-envs--container-environment-variables):
+
+```json
+"with-envs": [
+  { "name": "GITHUB-TOKEN",      "value": "secrets.GITHUB-TOKEN",      "mandatory": true },
+  { "name": "ANTHROPIC-API-KEY", "value": "secrets.ANTHROPIC-API-KEY", "mandatory": true }
+]
+```
+
+### Complete Example
+
+```json
+[
+  {
+    "schedule": "github-dependency-optimizer-schedule",
+    "cron": "*/5 * * * *",
+    "with-envs": [
+      { "name": "GITHUB-TOKEN",      "value": "secrets.GITHUB-TOKEN",      "mandatory": true },
+      { "name": "ANTHROPIC-API-KEY", "value": "secrets.ANTHROPIC-API-KEY", "mandatory": true }
+    ],
+    "executions": [
+      {
+        "name": "github-dependency-optimizer",
+        "platform": "github",
+        "repository": {
+          "url": "https://github.com/my-org/agent-target.git",
+          "name": "my-org/agent-target",
+          "ref": "main"
+        },
+        "use-plugins": [
+          {
+            "plugin-name": "dependency-optimizer@xianix-plugins-official",
+            "marketplace": "xianix-team/plugins-official"
+          }
+        ],
+        "execute-prompt": "xianix-agent is assigned for dependency health optimization. Run /dependency-optimizer to auto-scan manifests, verify licenses, and automatically open a remediation Pull Request."
+      }
+    ]
+  }
+]
+```
+
+Every 5 minutes, the agent installs `dependency-optimizer@xianix-plugins-official` into a fresh executor checked out at `my-org/agent-target` (branch `main`), injects `GITHUB-TOKEN` / `ANTHROPIC-API-KEY` from the tenant Secret Vault via the rule-set-level `with-envs`, and runs the prompt — no webhook involved.
+
+---
+
 ## Complete Example
 
 A rule set with two executions — a Sonnet-powered PR review with a spend cap and session reuse, plus a Haiku-powered issue analysis with a turn cap:
@@ -857,3 +975,5 @@ Only run the workflow for pull requests targeting a `release/` branch:
 6. The agent resolves `with-envs` (literals, `host.*`, `secrets.*`) and injects them into the executor container alongside the runtime values it manages itself (`ANTHROPIC_API_KEY`, etc.).
 7. **Cost & execution controls are applied** — `model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, and `resume-sessions` are forwarded to the executor as typed env vars (`XIANIX-MODEL`, `XIANIX-MAX-TURNS`, etc.). Any field that is not set is simply not seeded, so the executor falls back to its own defaults — there is no behavioral change for existing rules that don't declare these fields.
 8. The executor installs `use-plugins`, injects a cached `CLAUDE.md` and symbol map into the worktree so the agent doesn't re-explore the codebase from scratch (skipped when the repo ships its own `CLAUDE.md`; optionally enriched with an LLM-authored architecture narrative when `EXECUTOR-CONTEXT-LLM` / `XIANIX-CONTEXT-LLM` is enabled), optionally resumes a prior session (when `resume-sessions: true`), and runs the final prompt with the configured model, turn cap, tool restrictions, and spend cap applied.
+
+For `schedule` rule sets, step 1 becomes "the `cron` expression ticks," and steps 2 and the payload half of step 4 don't apply — there's no `match-any` or `use-inputs` to evaluate. Every execution in the rule set proceeds straight to step 3 on each tick. See [§ 8](#8-schedule--cron--time-triggered-rule-sets).

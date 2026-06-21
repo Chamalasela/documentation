@@ -73,7 +73,7 @@ export default defineConfig({
 					{ label: 'PR Comment Resolver', slug: 'official-plugins/pr-comment-resolver' },
 					{ label: 'Document Updater', slug: 'official-plugins/doc-writer' },
 					{ label: 'Requirement Analyst', slug: 'official-plugins/req-analyst' },
-					{ label: 'Incident Response', slug: 'official-plugins/incident-response' },
+					// { label: 'Incident Response', slug: 'official-plugins/incident-response' },
 					{ label: 'Test Strategist', slug: 'official-plugins/test-strategist' },
 					{ label: 'Web App Tester', slug: 'official-plugins/web-app-tester' },
 					{ label: 'Chatbot Tester', slug: 'official-plugins/chatbot-tester' },

@@ -8,9 +8,10 @@ The **Chatbot Tester** plugin validates AI chatbot behaviour in any web applicat
 | Phase | What it does |
 | --- | --- |
 | **Gather context** | Parses the input URL, fetches the issue/work item, and extracts the `chatbot-test` block containing widget hints, credentials, and Q&A pairs |
-| **Run Playwright** | Opens a headless session, locates the chatbot widget, and runs six test categories |
+| **Run Playwright** | Opens a headless session, runs a bot responsiveness probe, then executes all test categories |
 | **Judge responses** | Sends all Q&A pairs to an LLM in a single batched call to assess functional accuracy |
 | **Post report** | Computes the overall verdict and posts a structured report as a comment on the issue or work item |
+| **Persist results** | Writes JSON and CSV result files to a GitHub results repository and updates a Mermaid accuracy chart in its README |
 
 Works with **GitHub** and **Azure DevOps**. Also supports a **lite mode** for direct URL runs (UI tests only, no Q&A judgment).
 
@@ -34,18 +35,25 @@ flowchart TD
     J --> K[Phase 1 — Gather test context]
     K --> L{Phase 1 blocked?}
     L -- Yes --> M[Post BLOCKED comment and stop]
-    L -- No --> N[Phase 2 — Run Playwright session]
-    N --> O[Phase 3 — Judge responses with LLM]
-    O --> P[Phase 4 — Post structured report]
+    L -- No --> N[Phase 2 — Bot responsiveness probe]
+    N --> NB{Probe passed within 60s?}
+    NB -- No --> NC[Mark all categories BLOCKED]
+    NB -- Yes --> O[Phase 2 — Run all test categories]
+    NC --> P
+    O --> P[Phase 3 — Judge responses with LLM]
+    P --> Q[Phase 4 — Post structured report]
+    Q --> R[Phase 5 — Persist results to GitHub repo]
 ```
 
 1. **Parse URL** — determines entry type (`issue`, `wi`, or direct URL) and platform (`GitHub`, `AzureDevOps`, `DirectURL`) from the URL pattern.
 2. **Fetch artifact** — reads the GitHub issue or Azure DevOps work item body and scans it for a fenced `chatbot-test` code block. Stops with a BLOCKED comment if the block is absent or missing required fields.
 3. **Post progress comment** — immediately posts a "test in progress" comment before launching the browser so the team knows the run has started.
 4. **Gather context (Phase 1)** — verifies prerequisites, resolves the test URL, and determines whether a login is required.
-5. **Run Playwright (Phase 2)** — writes an instrumented Python/Playwright script, opens a headless Chromium session, locates the chatbot widget using the `trigger_hint`, and runs all six test categories. Captures verbatim bot responses for each Q&A pair.
-6. **Judge responses (Phase 3)** — sends all Q&A pairs in a single batched LLM call. Each pair is assessed for PASS, PARTIAL, or FAIL based on the `must_contain` terms.
-7. **Publish report (Phase 4)** — posts one structured report back to the issue or work item. For direct URL runs, writes `chatbot-test-report.md` to the current directory.
+5. **Bot responsiveness probe** — before running any test categories, sends a probe message and waits up to 60 seconds for a complete response (two-stage: 30s for any bot element, then 30s for the response to finish). If the bot does not respond within 60 seconds, all categories are marked BLOCKED and the run skips straight to reporting.
+6. **Run Playwright (Phase 2)** — writes an instrumented Python/Playwright script, opens a headless Chromium session, locates the chatbot widget using the `trigger_hint`, and runs all test categories. Captures verbatim bot responses for each Q&A pair.
+7. **Judge responses (Phase 3)** — sends all Q&A pairs in a single batched LLM call. Each pair is assessed for PASS, PARTIAL, or FAIL based on the `must_contain` terms.
+8. **Publish report (Phase 4)** — posts one structured report back to the issue or work item. For direct URL runs, writes `chatbot-test-report.md` to the current directory.
+9. **Persist results (Phase 5)** — writes a JSON and CSV result file to the configured GitHub results repository and updates a Mermaid accuracy chart in its README. Skipped if `CHATBOT-RESULTS-REPO` is not set.
 
 ---
 
@@ -58,7 +66,8 @@ flowchart TD
 | 3 | **Fallback Handling** | Gibberish and out-of-scope inputs — bot responds gracefully | Same |
 | 4 | **Response Latency** | Time from message sent to response complete (30s limit) | Same |
 | 5 | **Conversation Continuity** | Follow-up question retains context from previous response | Same |
-| 6 | **Empty Input Handling** | Blank message submission is handled gracefully | Same |
+| 6 | **Conversation Flow** | Multi-turn scripted flow defined in `conversation_flow` block — run in order | Skipped (requires `conversation_flow` in test block) |
+| 7 | **Empty Input Handling** | Blank message submission is handled gracefully | Same |
 
 ---
 
@@ -144,6 +153,8 @@ The Xianix Agent reads these from its secrets store and injects them at runtime 
 | `GITHUB-TOKEN` | GitHub | Yes | Authenticate `gh` CLI for fetching issue content and posting comments |
 | `AZURE-DEVOPS-TOKEN` | Azure DevOps | Yes | PAT for the ADO REST API — reading work items and posting comments |
 | `CHATBOT-TEST-PASSWORD` | Both | No | Password for apps requiring login. Only needed when `credentials.password_env` is set in the test case block |
+| `CHATBOT-RESULTS-REPO` | Both | No | GitHub repository for persisting test results (e.g. `org/chatbot-test-results`). If unset, Phase 5 is skipped silently |
+| `CHATBOT-RESULTS-GITHUB-TOKEN` | Both | No | PAT with write access to `CHATBOT-RESULTS-REPO` — used to clone and push result files. If unset, Phase 5 is skipped silently |
 
 ### GitHub Token Permissions
 
@@ -159,6 +170,14 @@ Create the token in **User Settings → Personal access tokens** with the follow
 | Scope | Access | Why it's needed |
 | --- | --- | --- |
 | **Work Items** | Read & Write | Fetch work item body and post report comments |
+
+### Results Repository Token Permissions (`CHATBOT-RESULTS-GITHUB-TOKEN`)
+
+Create a separate fine-grained PAT scoped only to the results repository:
+
+| Permission | Access | Why it's needed |
+| --- | --- | --- |
+| **Contents** | Read & Write | Clone the repo, write JSON/CSV result files, and push the updated README |
 
 ---
 
@@ -183,6 +202,38 @@ Create the token in **User Settings → Personal access tokens** with the follow
 | Any category PARTIAL, no FAILED or BLOCKED | **PARTIAL** |
 | Any category FAILED or BLOCKED | **FAILED** |
 | Login failed | **BLOCKED** |
+| Bot responsiveness probe failed (no response within 60s) | **BLOCKED** — all categories skipped |
+
+---
+
+## Bot Responsiveness Probe
+
+Before running any test categories, Phase 2 sends a probe message to the bot and measures the time to a fully completed response. The probe uses a two-stage timeout:
+
+| Stage | Timeout | What is checked |
+| --- | --- | --- |
+| **Stage 1** | 30 seconds | Any bot response element appears in the DOM |
+| **Stage 2** | 30 seconds | The response is fully rendered and the input field is ready again |
+
+If the bot does not complete a response within the combined 60-second window, all test categories are marked `BLOCKED` and the run skips straight to Phase 4 (report). The report will include a "Bot Unresponsive" banner explaining what happened.
+
+A partial response (streaming, loading spinner, "Thinking…") at 60 seconds does **not** count — the bot must produce a finished reply.
+
+---
+
+## Result Persistence
+
+When `CHATBOT-RESULTS-REPO` and `CHATBOT-RESULTS-GITHUB-TOKEN` are configured, Phase 5 writes result artifacts to the GitHub repository after every run:
+
+| Artifact | Location | Contents |
+| --- | --- | --- |
+| JSON result | `results/{chatbot-name}/{timestamp}.json` | Full run data: URL, platform, per-category verdicts and details |
+| CSV result | `results/{chatbot-name}/{timestamp}.csv` | Flat row for reporting and spreadsheet import |
+| README chart | `README.md` | Mermaid `xychart-beta` bar chart showing pass rate across the last 10 runs per category |
+
+The README is updated in place — each chatbot gets its own `## {chatbot-name}` section with an accuracy table and chart. If the section already exists it is replaced; new chatbots are appended.
+
+If either env var is not set, Phase 5 silently skips — the run still completes and the report is still posted.
 
 ---
 
@@ -191,6 +242,7 @@ Create the token in **User Settings → Personal access tokens** with the follow
 - Credentials, tokens, and secrets are never included in posted comments.
 - The temporary working directory (`_cbt_run/`) is deleted after every run, even if execution fails.
 - If `password_env` is set but the secret is not found, the run reports BLOCKED rather than attempting an unauthenticated session.
+- `CHATBOT-RESULTS-GITHUB-TOKEN` should be a fine-grained PAT scoped only to the results repository — do not reuse the main `GITHUB-TOKEN`.
 
 ---
 
@@ -290,7 +342,9 @@ The Chatbot Tester is **tag-driven**. It runs when the `ai-dlc/issue/test-chatbo
   ],
   "with-envs": [
     { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true },
-    { "name": "CHATBOT-TEST-PASSWORD", "value": "secrets.CHATBOT-TEST-PASSWORD", "mandatory": false }
+    { "name": "CHATBOT-TEST-PASSWORD", "value": "secrets.CHATBOT-TEST-PASSWORD", "mandatory": false },
+    { "name": "CHATBOT-RESULTS-REPO", "value": "secrets.CHATBOT-RESULTS-REPO", "mandatory": false },
+    { "name": "CHATBOT-RESULTS-GITHUB-TOKEN", "value": "secrets.CHATBOT-RESULTS-GITHUB-TOKEN", "mandatory": false }
   ],
   "execute-prompt": "Run /test-chatbot {{issue-url}} to perform the automated chatbot test."
 }
@@ -323,7 +377,9 @@ The Chatbot Tester is **tag-driven**. It runs when the `ai-dlc/issue/test-chatbo
   ],
   "with-envs": [
     { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true },
-    { "name": "CHATBOT-TEST-PASSWORD", "value": "secrets.CHATBOT-TEST-PASSWORD", "mandatory": false }
+    { "name": "CHATBOT-TEST-PASSWORD", "value": "secrets.CHATBOT-TEST-PASSWORD", "mandatory": false },
+    { "name": "CHATBOT-RESULTS-REPO", "value": "secrets.CHATBOT-RESULTS-REPO", "mandatory": false },
+    { "name": "CHATBOT-RESULTS-GITHUB-TOKEN", "value": "secrets.CHATBOT-RESULTS-GITHUB-TOKEN", "mandatory": false }
   ],
   "execute-prompt": "Run /test-chatbot {{workitem-url}} to perform the automated chatbot test."
 }
@@ -340,11 +396,12 @@ These blocks go inside the `executions` array of a rule set. See [Rules Configur
 | Path | Purpose |
 | --- | --- |
 | `commands/test-chatbot.md` | Entry command, argument pattern, and test case block reference |
-| `agents/orchestrator.md` | End-to-end orchestration flow across four phases |
+| `agents/orchestrator.md` | End-to-end orchestration flow across five phases, including the 60-second responsiveness probe hard constraint |
 | `skills/gather-test-context/SKILL.md` | Phase 1 — prerequisite checks and login detection |
-| `skills/run-playwright-session/SKILL.md` | Phase 2 — headless browser session and six test categories |
+| `skills/run-playwright-session/SKILL.md` | Phase 2 — headless browser session, two-stage responsiveness probe, and all test categories |
 | `skills/judge-responses/SKILL.md` | Phase 3 — batched LLM verdict for Q&A pairs |
 | `skills/post-test-report/SKILL.md` | Phase 4 — report construction and posting |
+| `skills/persist-results/SKILL.md` | Phase 5 — write JSON/CSV result files to GitHub results repo and update Mermaid accuracy chart |
 | `providers/github.md` | GitHub fetch/post operations via `gh` CLI |
 | `providers/azure-devops.md` | Azure DevOps fetch/post operations via REST API |
 | `styles/report-template.md` | Strict output report format with verdict icons and section rules |

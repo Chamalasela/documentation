@@ -7,6 +7,10 @@ The **UX Mob Process** plugin brings AI-native UX elaboration into Claude Code a
 
 It supports two project categories: **Greenfield** (starting from scratch) and **Brownfield** (evolving an existing product), with a mandatory AI Readiness assessment before any brownfield work begins.
 
+:::note[Standalone installation — no Xianix required]
+This plugin can be installed directly into your local Claude Code environment. You do not need to configure it through Xianix at all. See [Local Installation](#local-installation) below to get started. The [Xianix Agent Studio Integration](#xianix-agent-studio-integration) section at the bottom of this page is only relevant if you are also running the Xianix platform.
+:::
+
 ---
 
 ## What You Get Back
@@ -168,9 +172,11 @@ For a Brownfield project, AI Readiness runs automatically first:
 
 ---
 
-## Quick Start
+## Local Installation
 
-**Install the plugin** (one-time setup — choose one):
+Install the plugin directly into your Claude Code environment — no Xianix configuration needed.
+
+**One-time setup (choose one):**
 
 ```bash
 # Option A: copy to your Claude Code plugins directory
@@ -228,7 +234,9 @@ The plugin is composed of agents, skills, and a session hook. You don't invoke t
 
 ---
 
-## Rule Examples
+## Xianix Agent Studio Integration
+
+This section is only relevant if you are running the Xianix platform. If you installed the plugin locally into Claude Code, you can ignore this entirely.
 
 Add the execution block below to your `rules.json` to run UX Mob sessions directly inside an **Agent Studio chat conversation**.
 
@@ -244,7 +252,7 @@ Add the execution block below to your `rules.json` to run UX Mob sessions direct
 | `max-turns` | Maximum conversation turns before the session closes |
 | `execute-prompt` | The opening prompt sent to the agent when the session starts |
 
-### Agent Studio Chat
+### Sample rules.json
 
 ```json
 {

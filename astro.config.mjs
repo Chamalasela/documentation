@@ -78,6 +78,7 @@ export default defineConfig({
 					{ label: 'Web App Tester', slug: 'official-plugins/web-app-tester' },
 					{ label: 'Chatbot Tester', slug: 'official-plugins/chatbot-tester' },
 					{ label: 'Code Archaeology Agent', slug: 'official-plugins/code-archaeology-agent' },
+					{ label: 'UX Mob Process', slug: 'official-plugins/ux-mob-process' },
 				],
 			},
 				{

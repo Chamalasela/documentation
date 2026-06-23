@@ -230,48 +230,30 @@ The plugin is composed of agents, skills, and a session hook. You don't invoke t
 
 ## Rule Examples
 
-Add the execution block below to your `rules.json` to trigger a UX Mob session from the Xianix Agent when a GitHub Issue or Azure DevOps Work Item is tagged for UX elaboration.
-
-### When does the agent trigger?
-
-- **GitHub** — **label-driven**. Add the `ai-dlc/issue/ux-mob` label to an issue.
-- **Azure DevOps** — **assignment-driven**. Assign the work item to `xianix-agent <xianix-agent@99x.io>` and set its type to `UX Task`.
-
-| Platform | Scenario | Webhook event | Filter rule |
-|---|---|---|---|
-| GitHub | Label applied to issue | `issues` | `action==labeled` and `label.name=='ai-dlc/issue/ux-mob'` |
-| Azure DevOps | UX Task assigned to agent | `workitem.updated` | `resource.fields."System.AssignedTo".newValue=='xianix-agent <xianix-agent@99x.io>'` and `resource.revision.fields."System.WorkItemType"=='UX Task'` |
+Add the execution block below to your `rules.json` to run UX Mob sessions directly inside an **Agent Studio chat conversation**.
 
 ### Execution-block shape
 
 | Field | Purpose |
 |---|---|
-| `name` | Human-readable id for the execution |
-| `platform` | `"github"` or `"azuredevops"` |
-| `repository.url` | Webhook path to the repository URL |
-| `match-any` | Array of trigger filters — first match wins |
-| `use-inputs` | Issue or work item number to pass as context |
-| `use-plugins` | The plugin to invoke |
-| `with-envs` | Required environment variables from the agent's secrets store |
-| `execute-prompt` | The prompt sent to the agent |
+| `name` | Human-readable identifier for this rule |
+| `match-any` | Trigger filter — `x-xianix-chat-trigger?` activates the rule from an Agent Studio chat |
+| `use-plugins` | The plugin to load, referenced by name and marketplace URL |
+| `model` | Claude model to use for the session |
+| `max-budget-usd` | Maximum spend cap for the session |
+| `max-turns` | Maximum conversation turns before the session closes |
+| `execute-prompt` | The opening prompt sent to the agent when the session starts |
 
-### GitHub
+### Agent Studio Chat
 
 ```json
 {
-  "name": "github-issue-ux-mob-process",
-  "platform": "github",
-  "repository": {
-    "url": "repository.clone_url"
-  },
+  "name": "chat-ux-mob-process",
   "match-any": [
     {
-      "name": "github-issue-ux-mob-label-applied",
-      "rule": "action==labeled&&label.name=='ai-dlc/issue/ux-mob'"
+      "name": "chat-only-stub",
+      "rule": "x-xianix-chat-trigger?"
     }
-  ],
-  "use-inputs": [
-    { "name": "issue-number", "value": "issue.number", "mandatory": true }
   ],
   "use-plugins": [
     {
@@ -279,41 +261,13 @@ Add the execution block below to your `rules.json` to trigger a UX Mob session f
       "marketplace": "xianix-team/plugins-official"
     }
   ],
-  "with-envs": [
-    { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
-  ],
-  "execute-prompt": "Issue #{{issue-number}} in {{repository-name}} has been tagged for UX Mob elaboration.\n\nRun /ux-start to begin a UX Mob session for this issue. Use the issue title and description as the initial product context input."
-}
-```
-
-### Azure DevOps
-
-```json
-{
-  "name": "azuredevops-ux-task-ux-mob-process",
-  "platform": "azuredevops",
-  "match-any": [
-    {
-      "name": "azuredevops-ux-task-assigned-to-agent",
-      "rule": "eventType==workitem.updated&&resource.fields.\"System.AssignedTo\".newValue=='xianix-agent <xianix-agent@99x.io>'&&resource.revision.fields.\"System.WorkItemType\"=='UX Task'"
-    }
-  ],
-  "use-inputs": [
-    { "name": "workitem-id", "value": "resource.workItemId" }
-  ],
-  "use-plugins": [
-    {
-      "plugin-name": "ux-mob-process@xianix-plugins-official",
-      "marketplace": "xianix-team/plugins-official"
-    }
-  ],
-  "with-envs": [
-    { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
-  ],
-  "execute-prompt": "Work item #{{workitem-id}} has been assigned to xianix-agent for UX elaboration.\n\nRun /ux-start to begin a UX Mob session for this work item. Use the work item title and description as the initial product context input."
+  "model": "claude-sonnet-4-5",
+  "max-budget-usd": 2,
+  "max-turns": 150,
+  "execute-prompt": "Run /ux-mob-process:ux-start to begin the UX Mob process. Ask the user whether this is a Greenfield or Brownfield project if not already stated."
 }
 ```
 
 :::note
-The UX Mob Process is designed as an **interactive, human-gated workflow**. When triggered via the agent, a human must remain present in the session to review drafts and approve each phase. The agent will not proceed autonomously past any approval gate.
+The UX Mob Process is designed as an **interactive, human-gated workflow**. A human must remain present in the session to review drafts and approve each phase. The agent will not proceed autonomously past any approval gate.
 :::

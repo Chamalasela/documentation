@@ -37,7 +37,7 @@ The lowest-friction rollout is usually `ai-dlc/pr/pr-review` first. Add `ai-dlc/
 :::
 
 :::note[Triggers fire on addition only]
-Every rule in this page is scoped to the **moment a label or tag is added** — not to the PR having that label later on. On GitHub this is enforced by `action==labeled` plus a `label.name==…` match; on Azure DevOps it's enforced by `message.text` matching the "tagged the pull request" event plus a check on the new tag in `resource.labels`. As a result, an agent runs **exactly once** per label/tag application: re-running it means removing the label/tag and adding it again.
+Every rule in this page is scoped to the **moment a label or tag is added** — not to the PR having that label later on. On GitHub this is enforced by `action==labeled` plus a `label.name==…` match. On Azure DevOps, label data is **not included in webhook payloads** — triggering instead uses a PR comment containing the trigger phrase (e.g. `ai-dlc/pr/pr-review`), which fires exactly once per comment. As a result, an agent runs **exactly once** per trigger event: re-running it means posting the trigger phrase again in a new comment.
 :::
 
 ---
@@ -135,9 +135,10 @@ This is the best default starting point for AI-DLC on a mature team because it a
 | Platform | Surface | What you do | Webhook event the rule matches |
 |---|---|---|---|
 | **GitHub** | Label on the PR | Add `ai-dlc/pr/pr-review` | `pull_request` where `action==labeled` **and** the just-added `label.name=='ai-dlc/pr/pr-review'` (the rule fires once per addition, not on every later PR update) |
-| **GitHub** | Reviewer assignment *(default rule)* | Request `xianix-agent` as a reviewer | `pull_request` with `action==review_requested` and `requested_reviewer.login=='xianix-agent'` |
-| **Azure DevOps** | Tag on the PR | Add `ai-dlc/pr/pr-review` | `git.pullrequest.updated` where `message.text` matches `tagged the pull request` **and** the new tag in `resource.labels` is `ai-dlc/pr/pr-review` (so the rule fires only on the tag-addition event, not on commits, comments, or reviewer updates) |
-| **Azure DevOps** | Reviewer assignment *(default rule)* | Add `xianix-agent` as a reviewer | `git.pullrequest.updated` with `xianix-agent` in `resource.reviewers` and message contains `as a reviewer` |
+| **GitHub** | New commits to tagged PR | Push to a PR with the label | `pull_request` where `action==synchronize` and `ai-dlc/pr/pr-review` is in `pull_request.labels` — triggers a focused push-update review |
+| **Azure DevOps** | Comment on the PR | Post a top-level comment containing `ai-dlc/pr/pr-review` | `ms.vss-code.git-pullrequest-comment-event` where `parentCommentId==0` and comment body contains `ai-dlc/pr/pr-review` (Azure DevOps webhooks do not emit label data, so comment-based triggering is used instead) |
+| **Azure DevOps** | Reviewer assignment *(default rule)* | Add `xianix-agent@99x.io` as a reviewer | `git.pullrequest.updated` with `xianix-agent@99x.io` in `resource.reviewers` and `message.text` contains `changed the reviewer list` |
+| **Azure DevOps** | New commits (push update) | Push new commits to a PR being reviewed | `git.pullrequest.updated` where `message.text` contains `updated the source branch` and `xianix-agent@99x.io` is already in `resource.reviewers` — triggers a focused push-update review |
 
 See [PR Reviewer — Rule Examples](/official-plugins/pr-reviewer/#rule-examples) for the complete `match-any` blocks.
 

@@ -33,12 +33,16 @@ Click **+ Create subscription** and choose **Web Hooks** as the service.
 
 ## 4. Choose the trigger event
 
-The default rules listen for pull request activity, so create **two** service hook subscriptions — one for each event type below. This covers PR creation, new commits pushed, and reviewer assignment changes.
+The default rules listen for pull request activity, so create **three** service hook subscriptions — one for each event type below.
 
-| Event | When it fires |
-|---|---|
-| **Pull request created** | A new pull request is opened |
-| **Pull request updated** | New commits pushed, or reviewer assignments changed |
+| Event | When it fires | What it enables |
+| --- | --- | --- |
+| **Pull request updated** | New commits pushed, reviewer assignments changed, or other PR updates | Initial review (agent added as reviewer) and focused push-update reviews |
+| **Pull request comment added** | A new comment is posted on a pull request | Comment-based triggering — post `ai-dlc/pr/pr-review` in a PR comment to start a review |
+
+:::note[No "Pull request created" subscription needed]
+The initial review fires on a `pull_request updated` event (when `xianix-agent@99x.io` is added as a reviewer), not on PR creation. You do not need a separate "Pull request created" subscription.
+:::
 
 You can optionally add a target branch filter to limit events to specific branches, but make sure **Change** is left as `[Any]` — the agent's rules engine handles finer-grained filtering itself.
 
@@ -52,13 +56,13 @@ Click **Test** to verify connectivity — a `200 OK` response confirms the agent
 
 The default rules trigger the agent in three situations:
 
-1. A pull request is **created** with the agent listed as a reviewer.
-2. **New commits are pushed** to a PR that already has the agent as a reviewer.
-3. The agent is **added as a reviewer** on an existing PR.
+1. The agent is **added as a reviewer** on a pull request — triggers the initial comprehensive review.
+2. A **new top-level PR comment** containing the text `ai-dlc/pr/pr-review` is posted — triggers a comprehensive review.
+3. **New commits are pushed** to a PR that already has the agent as a reviewer — triggers a focused incremental review (`--push-update` mode) of only the new commits.
 
 See the [PR Reviewer — Azure DevOps rule example](/official-plugins/pr-reviewer/#azure-devops) for the exact `match-any` filters and input mappings behind these triggers.
 
-To run your first end-to-end test, open a pull request and assign it to the agent's user account (`xianix-agent` on Agentri). Then open the **Activity Logs** in the Agent Studio — you should see incoming task logs appear within 60 seconds. Within around 5 minutes, the agent will post a review comment directly on the PR.
+To run your first end-to-end test, open a pull request and add the agent's user account (`xianix-agent` on Agentri) as a reviewer. Then open the **Activity Logs** in the Agent Studio — you should see incoming task logs appear within 60 seconds. Within around 5 minutes, the agent will post a review comment directly on the PR.
 
 ## Next steps
 

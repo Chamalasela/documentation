@@ -27,10 +27,7 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
       {
         "name": "...",
         "platform": "...",
-        "repository": {
-          "url": "...",
-          "ref": "..."
-        },
+        "repository": "...",
         "match-any":        [ ... ],
         "use-inputs":       [ ... ],
         "use-plugins":      [ ... ],
@@ -41,6 +38,7 @@ In the **the-agent** reference implementation, the default file is `Knowledge/ru
         "disallowed-tools": [ ... ],
         "max-budget-usd":   1.00,
         "resume-sessions":  false,
+        "conversation-key": "...",
         "execute-prompt":   "..."
       }
     ]
@@ -87,7 +85,8 @@ A `schedule` rule set replaces `webhook` / `match-any` / `use-inputs` with `cron
 | `allowed-tools` *(per execution, optional)* | List of tool names auto-approved without a permission prompt. Does not restrict which tools are available; use `disallowed-tools` to block tools entirely. See [§ 7](#7-cost--execution-controls). |
 | `disallowed-tools` *(per execution, optional)* | List of tool names (or scoped patterns like `"Bash(rm *)"`) to remove from the agent's context. See [§ 7](#7-cost--execution-controls). |
 | `max-budget-usd` *(per execution, optional)* | Hard USD spend cap per run. The SDK aborts the run once this threshold is crossed. See [§ 7](#7-cost--execution-controls). |
-| `resume-sessions` *(per execution, optional)* | When `true`, back-to-back runs on the same conversation (same repo + PR/issue) resume the prior Claude Code session. Best-effort — a missing session falls back to a fresh run. See [§ 7](#7-cost--execution-controls). |
+| `resume-sessions` *(per execution, optional)* | When `true`, back-to-back runs on the same conversation resume the prior Claude Code session. Best-effort — a missing session falls back to a fresh run. Pair with `conversation-key` to define what "the same conversation" means. See [§ 7](#7-cost--execution-controls). |
+| `conversation-key` *(per execution, optional)* | Binding that identifies the conversation for session-resume keying (e.g. `"pull_request.number"` so every run on the same PR shares one session). Same JSON-path / constant forms as the `repository` sub-fields. Only consulted when `resume-sessions` is `true`. See [§ 7](#7-cost--execution-controls). |
 
 Each execution block that passes its `match-any` filters is scheduled independently when multiple blocks match the same payload.
 
@@ -145,57 +144,55 @@ For a rule set triggered on a recurring timer instead of a webhook, replace `web
 
 ## 1b. `platform` & `repository` — Structural Execution Context
 
-These two execution-level fields describe **what the run operates on** — independent of which plugin is used. They sit alongside `match-any` / `use-inputs` / `use-plugins` and are resolved before any plugin runs. The framework uses them directly (credential setup, workspace volume, worktree checkout, chat-side input resolution) **and** auto-injects the resolved values into `XIANIX_INPUTS` under canonical kebab-case keys, so plugin prompts and the executor entrypoint can read them off the same keys they always have.
+These two execution-level fields describe **what the run operates on** — independent of which plugin is used. They sit alongside `match-any` / `use-inputs` / `use-plugins` and are resolved before any plugin runs. The framework uses them directly (credential setup, workspace volume, chat-side input resolution) **and** auto-injects the resolved values into `XIANIX_INPUTS` under canonical kebab-case keys, so plugin prompts and the executor entrypoint can read them off the same keys they always have.
+
+```json
+"platform": "github",
+"repository": "repository.clone_url"
+```
+
+The bare-string form is shorthand for `{ "url": "repository.clone_url" }`. The object form is still accepted when you need a constant URL:
 
 ```json
 "platform": "github",
 "repository": {
-  "url": "repository.clone_url",
-  "ref": "pull_request.head.ref"
+  "url": "repository.clone_url"
 }
 ```
 
 | Field             | Type                                                               | Description |
 |-------------------|--------------------------------------------------------------------|-------------|
 | `platform`        | string literal                                                     | Hosting service (`github`, `azuredevops`, …). Used by the executor to pick the right `git` credential helper and is exposed to plugin prompts as `{{platform}}`. Empty / omitted means the executor will infer from the repo URL (defaults to `github`). |
+| `repository`      | string (JSON path) **or** object                                   | Either a bare JSON path for the clone URL (shorthand for `repository.url`) or an object with `url`. |
 | `repository.url`  | string (JSON path) **or** `{ value, constant }` object             | Either a JSON path that resolves to the clone URL (the common webhook-driven case) or a hard-coded literal via the constant form (see [Hard-coding the repository](#hard-coding-the-repository-constant-form)). **Mandatory when declared** — if a declared JSON path doesn't resolve, the execution block is skipped before any container starts. Exposed as `{{repository-url}}`. |
-| `repository.ref`  | string (JSON path) **or** `{ value, constant }` object             | Either a JSON path that resolves to the git ref (branch, commit SHA, or tag), or a constant pinning the run to a fixed branch/tag. **Mandatory when declared.** Omit entirely to run against the bare-clone HEAD. Exposed as `{{git-ref}}` and used directly by `Executor/entrypoint.sh` to position the worktree before the prompt runs. |
 
 > **`{{repository-name}}` is derived, not declared.** A short `owner/repo`-style identifier is computed from the resolved `repository.url` (platform-aware: GitHub, Azure DevOps `_git` URLs, etc.) and auto-injected as `{{repository-name}}`. There is no `repository.name` knob in the schema — clone URL and display name are kept in lockstep so they can never drift. If you need a different display name, pick a different clone URL. The one exception is `schedule` rule sets, which may declare `repository.name` explicitly — see [§ 8](#8-schedule--cron--time-triggered-rule-sets).
 
 #### Hard-coding the repository (constant form)
 
-For runs whose repository or ref is fixed regardless of the webhook payload — cron pings, Slack triggers, single-tenant agents pinned to one repo, manual triggers — wrap the value in `{ "value": "...", "constant": true }`:
+For runs whose repository is fixed regardless of the webhook payload — cron pings, Slack triggers, single-tenant agents pinned to one repo, manual triggers — wrap the value in `{ "value": "...", "constant": true }`:
 
 ```json
 "repository": {
-  "url": { "value": "https://github.com/my-org/agent-target.git", "constant": true },
-  "ref": { "value": "main",                                          "constant": true }
+  "url": { "value": "https://github.com/my-org/agent-target.git", "constant": true }
 }
 ```
 
-The bare-string shorthand (`"url": "repository.clone_url"`) is just sugar for `{ "value": "repository.clone_url", "constant": false }`, so existing rules need no changes. Mixed forms also fall out naturally — clone a fixed mirror but check out whatever ref the webhook says:
-
-```json
-"repository": {
-  "url": { "value": "https://github.com/my-org/mirror.git", "constant": true },
-  "ref": "pull_request.head.ref"
-}
-```
+The nested bare-string shorthand (`"url": "repository.clone_url"`) is just sugar for `{ "value": "repository.clone_url", "constant": false }`, so existing object-form rules need no changes.
 
 Constant URLs of course also drive `{{repository-name}}` — the derivation runs on the resolved URL regardless of how it was supplied.
 
 ### Why are these separate from `use-inputs`?
 
 - They are **structural** — every webhook-triggered run on a repo needs them, regardless of plugin. Promoting them to execution-level removes per-plugin duplication and makes the contract explicit.
-- The framework needs them **before** the plugin loop runs (clone target, credential helper, volume name, worktree ref) — they were already special-cased; now the schema reflects that.
-- `repository.ref` is part of the *binding* (which repo, at which ref), not a free-form input the prompt happens to use — nesting it next to `url` keeps that relationship obvious.
+- The framework needs them **before** the plugin loop runs (clone target, credential helper, volume name) — they were already special-cased; now the schema reflects that.
 - The chat-driven path (`SupervisorSubagentTools.RunClaudeCodeOnRepository`) treats `RepositoryUrl` / `RepositoryName` as first-class typed fields and derives the display name from the URL the same way the webhook path does. Aligning the webhook schema removes a subtle divergence.
 - Executions that don't operate on a repo (e.g. Azure DevOps work-item analysis) just **omit** the `repository` block — no need for `mandatory: false` ceremony on per-plugin inputs.
+- The worktree always starts on the **default-branch HEAD**. Task-specific refs are the plugin's job.
 
 ### Wire-format
 
-Plugin prompts and `Executor/entrypoint.sh` always read structural values from these canonical `XIANIX_INPUTS` keys (`platform`, `repository-url`, `repository-name`, `git-ref`). The agent serialises the resolved structural values into the inputs dict under exactly these keys — they are **not** authored under `use-inputs` and the same key names are not used for anything else. `repository-name` is the derived value (from `repository.url`), not a separate path.
+Plugin prompts and `Executor/entrypoint.sh` always read structural values from these canonical `XIANIX_INPUTS` keys (`platform`, `repository-url`, `repository-name`). The agent serialises the resolved structural values into the inputs dict under exactly these keys — they are **not** authored under `use-inputs` and the same key names are not used for anything else. `repository-name` is the derived value (from `repository.url`), not a separate path.
 
 ### Mandatory semantics
 
@@ -233,18 +230,20 @@ Each rule is a comparison of a **JSON path** against a **literal value**, option
 <json-path> <operator> <expected-value>
 ```
 
-Six operators are supported. All string comparisons are case-sensitive and ordinal.
+Six operators are supported.
 
-| Operator | Meaning                                         | Missing path returns |
-|----------|-------------------------------------------------|----------------------|
-| `==`     | Equals                                          | `false`              |
-| `!=`     | Not equals                                      | `true`               |
-| `^=`     | Starts with (string prefix match)               | `false`              |
-| `!^=`    | Does not start with                             | `true`               |
-| `*=`     | Contains (substring match)                      | `false`              |
-| `!*=`    | Does not contain                                | `true`               |
+| Operator | Meaning                                         | Case-sensitive | Missing path returns |
+|----------|-------------------------------------------------|----------------|----------------------|
+| `==`     | Equals                                          | yes | `false` |
+| `!=`     | Not equals                                      | yes | `true`  |
+| `^=`     | Starts with (string prefix match)               | no  | `false` |
+| `!^=`    | Does not start with                             | no  | `true`  |
+| `*=`     | Contains (substring match)                      | no  | `false` |
+| `!*=`    | Does not contain                                | no  | `true`  |
 
 `^=`, `!^=`, `*=`, and `!*=` only match **string** values — they never match numbers, booleans, or `null`.
+
+The text-search operators (`^=`, `!^=`, `*=`, `!*=`) match **case-insensitively** — they are meant for fuzzy human text such as `@`-mentions and message bodies (e.g. `comment.body*='@xianix'` matches `@Xianix`). Equality (`==`, `!=`) stays **case-sensitive and ordinal** because it targets structured identifiers where case is meaningful (GitHub label and branch names, enum-like statuses).
 
 Two additional **unary** operators check whether a path exists (resolves to a non-null value) without comparing against a right-hand side:
 
@@ -423,7 +422,7 @@ Check whether a field is present (and non-null) in the payload — useful for op
 
 Extracts values from the webhook payload into named variables. They are used for `execute-prompt` interpolation and are forwarded to the executor (for example as `XIANIX_INPUTS`).
 
-> **Don't put structural context here.** `platform`, `repository-url`, `repository-name`, and `git-ref` are declared at the [execution level](#1b-platform--repository--structural-execution-context) and auto-injected into `XIANIX_INPUTS` for you. Authoring them under `use-inputs` is unsupported — the framework uses the structural fields for credential setup, volume management, worktree checkout, and chat-side input validation.
+> **Don't put structural context here.** `platform`, `repository-url`, and `repository-name` are declared at the [execution level](#1b-platform--repository--structural-execution-context) and auto-injected into `XIANIX_INPUTS` for you. Authoring them under `use-inputs` is unsupported — the framework uses the structural fields for credential setup, volume management, and chat-side input validation.
 
 ```json
 "use-inputs": [
@@ -461,7 +460,7 @@ Given:
 | `"value": "high", "constant": true` | `"high"` (literal) |
 | `"value": "resource.revision.fields.\"System.Title\""` (path uses a quoted segment for a dotted key) | Azure DevOps work item `System.Title` |
 
-> Need the clone URL, repo name, platform, or checked-out ref in your prompt? Reference `{{repository-url}}`, `{{repository-name}}`, `{{platform}}`, or `{{git-ref}}` directly — they're auto-injected from the [structural fields](#1b-platform--repository--structural-execution-context).
+> Need the clone URL, repo name, or platform in your prompt? Reference `{{repository-url}}`, `{{repository-name}}`, or `{{platform}}` directly — they're auto-injected from the [structural fields](#1b-platform--repository--structural-execution-context).
 
 If a path does not resolve (missing property), the input is set to `null`. If the input is marked `"mandatory": true`, the entire execution block is skipped instead.
 
@@ -620,7 +619,7 @@ The error message lists which env vars were missing and where to set them — th
 A string template run as the Claude Code prompt after plugins are installed. Use `{{input-name}}` placeholders for resolved `use-inputs` values.
 
 ```json
-"execute-prompt": "You are reviewing PR #{{pr-number}} titled \"{{pr-title}}\" in {{repository-name}} (branch: {{git-ref}}).\n\nRun /code-review to perform the automated review."
+"execute-prompt": "You are reviewing PR #{{pr-number}} titled \"{{pr-title}}\" in {{repository-name}}.\n\nRun /pr-review {{pr-number}} to perform the automated review."
 ```
 
 Placeholders are replaced case-insensitively. Any `{{name}}` with no matching input is left unchanged.
@@ -629,7 +628,7 @@ Placeholders are replaced case-insensitively. Any `{{name}}` with no matching in
 
 ## 7. Cost & Execution Controls
 
-Six optional fields on every execution block let you tune cost, speed, and safety — from picking a cheaper model to hard-capping spend. All are omitted by default so existing rules work unchanged.
+Seven optional fields on every execution block let you tune cost, speed, and safety — from picking a cheaper model to hard-capping spend. All are omitted by default so existing rules work unchanged.
 
 ```json
 {
@@ -638,7 +637,8 @@ Six optional fields on every execution block let you tune cost, speed, and safet
   "allowed-tools":    ["Read", "Grep", "Bash"],
   "disallowed-tools": ["WebSearch", "WebFetch"],
   "max-budget-usd":   1.00,
-  "resume-sessions":  true
+  "resume-sessions":  true,
+  "conversation-key": "pull_request.number"
 }
 ```
 
@@ -702,17 +702,27 @@ Hard USD cap per run, passed to the Claude Code SDK. The run is aborted by the S
 
 The configured budget and an over-budget flag are recorded in metrics, so you can chart how often a block is hitting its cap and tune accordingly.
 
-### `resume-sessions` — Session reuse
+### `resume-sessions` + `conversation-key` — Session reuse
 
-When `true`, the executor persists the Claude Code session ID on the tenant volume after each run and resumes it on the next run against the same conversation (same repo + PR or issue number). This means the agent remembers what it read and did on the previous review instead of rediscovering the codebase from scratch.
+When `resume-sessions` is `true`, the executor persists the Claude Code session ID on the tenant volume after each run and resumes it on the next run against the same conversation. This means the agent remembers what it read and did on the previous review instead of rediscovering the codebase from scratch.
+
+Getting session resume takes **two fields** on the execution block:
 
 ```json
-"resume-sessions": true
+"resume-sessions":  true,
+"conversation-key": "pull_request.number"
 ```
 
-This is most valuable for bursty flows — a PR that receives multiple pushes in quick succession, or an issue that gets re-analysed after a comment. On the first run (or when no prior session is found) a fresh session starts automatically, so the flag is always safe to set.
+1. **`resume-sessions: true`** turns the feature on (forwarded to the executor as `XIANIX-RESUME-SESSIONS`).
+2. **`conversation-key`** tells the framework which payload field identifies the conversation — i.e. which runs should share a session. For a GitHub PR review that's `"pull_request.number"`; for an Azure DevOps PR it's `"resource.pullRequestId"`; for an issue-analysis flow it might be `"issue.number"`.
 
-> **Best-effort.** A missing or expired session silently falls back to a fresh run — the flag never causes a failure.
+The resolved value is auto-injected into `XIANIX_INPUTS` as the canonical `conversation-id` key. The executor treats it as an **opaque** session key (filename-sanitised, no meaning attached) — same run against the same repo with the same `conversation-id` resumes; anything else starts fresh. Sessions are stored per tenant + repository volume, so the same PR number in two different repositories never collides.
+
+`conversation-key` accepts the same two forms as the `repository` sub-fields: a bare string is a JSON path into the webhook payload, and `{ "value": "...", "constant": true }` pins a literal (useful for e.g. a cron flow where every run is one ongoing conversation).
+
+This is most valuable for bursty flows — a PR that receives multiple pushes in quick succession, or an issue that gets re-analysed after a comment. On the first run (or when no prior session is found) a fresh session starts automatically, so the flags are always safe to set.
+
+> **Best-effort, never blocking.** A missing or expired session silently falls back to a fresh run, and — unlike the `repository` bindings — a `conversation-key` path that doesn't resolve does **not** skip the execution block; the run simply proceeds without session keying. Setting `resume-sessions: true` without a `conversation-key` is valid but inert: with no key there is nothing to resume against, so every run starts fresh.
 
 ### Cached repository context (`CLAUDE.md` + symbol map)
 
@@ -734,7 +744,8 @@ Independent of the per-block fields above, the executor prepares a cached orient
 | `allowed-tools` | string array | `[]` | Tools to auto-approve (does not restrict). |
 | `disallowed-tools` | string array | `[]` | Tools to remove from the agent's context. Accepts bare names (`"WebSearch"`) or scoped patterns (`"Bash(rm *)"`). |
 | `max-budget-usd` | number | *(none)* | USD spend cap; run aborted by the SDK once crossed. |
-| `resume-sessions` | boolean | `false` | Resume the prior session for this conversation (repo + PR/issue). |
+| `resume-sessions` | boolean | `false` | Resume the prior session for this conversation. Requires `conversation-key` to define the conversation identity. |
+| `conversation-key` | string (JSON path) or `{ value, constant }` object | *(none)* | Payload field (or constant) identifying the conversation; injected as `conversation-id`. Best-effort — an unresolvable path never skips the block. |
 
 ---
 
@@ -829,7 +840,7 @@ Every 5 minutes, the agent installs `dependency-optimizer@xianix-plugins-officia
 
 ## Complete Example
 
-A rule set with two executions — a Sonnet-powered PR review with a spend cap and session reuse, plus a Haiku-powered issue analysis with a turn cap:
+A webhook rule set with two executions — a Sonnet-powered PR review with a spend cap and session reuse, plus a Haiku-powered issue analysis with a turn cap — followed by a chat rule set exposing the PR reviewer to chat with its own tuning:
 
 ```json
 [
@@ -842,10 +853,7 @@ A rule set with two executions — a Sonnet-powered PR review with a spend cap a
       {
         "name": "github-pull-request-review",
         "platform": "github",
-        "repository": {
-          "url": "repository.clone_url",
-          "ref": "pull_request.head.ref"
-        },
+        "repository": "repository.clone_url",
         "match-any": [
           { "name": "pr-opened",       "rule": "action==opened" },
           { "name": "pr-synchronize",  "rule": "action==synchronize&&pull_request.labels.*.name=='ai-dlc/pr/pr-review'" }
@@ -865,14 +873,13 @@ A rule set with two executions — a Sonnet-powered PR review with a spend cap a
         "disallowed-tools": ["WebSearch", "WebFetch"],
         "max-budget-usd":   2.50,
         "resume-sessions":  true,
-        "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}} (branch: {{git-ref}}).\n\nRun /pr-review to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
+        "conversation-key": "number",
+        "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}}.\n\nRun /pr-review {{pr-number}} to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
       },
       {
         "name": "github-issue-requirement-analysis",
         "platform": "github",
-        "repository": {
-          "url": "repository.clone_url"
-        },
+        "repository": "repository.clone_url",
         "match-any": [
           { "name": "issue-labeled", "rule": "action==labeled&&label.name=='ai-dlc/issue/analyze'" }
         ],
@@ -888,6 +895,17 @@ A rule set with two executions — a Sonnet-powered PR review with a spend cap a
         "model":     "claude-haiku-4-5",
         "max-turns": 30,
         "execute-prompt": "Issue #{{issue-number}} in {{repository-name}} has been assigned for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated analysis."
+      }
+    ]
+  },
+  {
+    "chat": "chat",
+    "model": "claude-sonnet-4-5",
+    "max-budget-usd": 5.0,
+    "use-plugins": [
+      {
+        "plugin-name": "pr-reviewer@xianix-plugins-official",
+        "marketplace": "xianix-team/plugins-official"
       }
     ]
   }
@@ -969,8 +987,8 @@ Only run the workflow for pull requests targeting a `release/` branch:
 
 1. A webhook fires with a name that matches `webhook` (e.g. `"Default"`).
 2. For each execution block, if `match-any` is non-empty, at least one `rule` must pass.
-3. **Structural fields are resolved first** — `platform`, `repository.url`, `repository.ref`. JSON-path bindings are looked up against the payload; constant bindings (`{ "value": "...", "constant": true }`) are taken verbatim. If a declared *path* doesn't resolve, the block is skipped — constants never fail to resolve.
-4. `use-inputs` are resolved from the payload, and the resolved structural values are auto-injected back into the inputs dict under the canonical keys `platform` / `repository-url` / `git-ref`. The short `repository-name` (e.g. `owner/repo`) is **derived** from `repository-url` (platform-aware: handles GitHub, Azure DevOps `_git` URLs, etc.) and injected alongside them so prompts and plugins see a single combined view.
+3. **Structural fields are resolved first** — `platform` and `repository` / `repository.url`. A bare-string `repository` is treated as a JSON path for the clone URL. JSON-path bindings are looked up against the payload; constant bindings (`{ "value": "...", "constant": true }`) are taken verbatim. If a declared *path* doesn't resolve, the block is skipped — constants never fail to resolve.
+4. `use-inputs` are resolved from the payload, and the resolved structural values are auto-injected back into the inputs dict under the canonical keys `platform` / `repository-url`. The short `repository-name` (e.g. `owner/repo`) is **derived** from `repository-url` (platform-aware: handles GitHub, Azure DevOps `_git` URLs, etc.) and injected alongside them so prompts and plugins see a single combined view.
 5. `execute-prompt` is interpolated with those inputs (including the auto-injected structural values).
 6. The agent resolves `with-envs` (literals, `host.*`, `secrets.*`) and injects them into the executor container alongside the runtime values it manages itself (`ANTHROPIC_API_KEY`, etc.).
 7. **Cost & execution controls are applied** — `model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, and `resume-sessions` are forwarded to the executor as typed env vars (`XIANIX-MODEL`, `XIANIX-MAX-TURNS`, etc.). Any field that is not set is simply not seeded, so the executor falls back to its own defaults — there is no behavioral change for existing rules that don't declare these fields.

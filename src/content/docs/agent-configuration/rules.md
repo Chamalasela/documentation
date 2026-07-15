@@ -1,150 +1,128 @@
 ---
 title: Rules Configuration
-description: How rules.json controls what the agent does when a webhook arrives.
+description: How rules.json controls what the agent does — the shared structure behind webhook, schedule, and chat rule sets.
 ---
 
-`rules.json` is the single configuration surface that controls **what the agent does** when a webhook arrives — or when a schedule fires. Each entry in the JSON array is a self-contained rule set, keyed by either a webhook name (`webhook`) or a cron schedule (`schedule` + `cron`), that maps to one or more **execution blocks**. Each block independently declares payload filters, input extraction, plugin installation, and a Claude Code prompt template — so a single inbound event (or a recurring tick) can fan out into multiple specialised workflows without any custom code.
+`rules.json` is the single configuration surface that controls **what the agent does**. Each entry in the JSON array is a self-contained **rule set** triggered by one of three things:
 
-If **multiple** execution blocks in the same rule set match one webhook payload, **each** match is scheduled as its own run (separate activation / executor session) with that block's inputs, plugins, and prompt. `schedule` rule sets have no payload to match against — **every** execution block in the rule set runs on each cron tick. See [§ 8](#8-schedule--cron--time-triggered-rule-sets).
+- an inbound **webhook** (`webhook`) — see [Webhook Rule Sets](/agent-configuration/rules/webhooks/),
+- a recurring **cron schedule** (`schedule` + `cron`) — see [Schedule Rule Sets](/agent-configuration/rules/schedules/),
+- an interactive **chat** dispatch (`chat`) — see [Chat Rule Sets](/agent-configuration/rules/chat/).
+
+Every rule set maps to one or more **execution blocks** (chat rule sets are the exception — they have no `executions`). Each block independently declares payload filters, input extraction, plugin installation, and a Claude Code prompt template — so a single inbound event (or a recurring tick) can fan out into multiple specialised workflows without any custom code.
 
 ```
 rules.json  →  WebhookRulesEvaluator  →  EventOrchestrator  →  ProcessingWorkflow  →  Executor Container
 ```
 
-In the **the-agent** reference implementation, the default file is `Knowledge/rules.json`, embedded at agent registration as Xians knowledge document **`Rules`**.
+In the **the-agent** reference implementation, the default file is `Knowledge/rules.json`, embedded at agent registration as Xians knowledge document **`Rules`**. The same document holds webhook, schedule, and chat rule sets side by side — each reader keeps only the entries whose discriminator key it recognises.
+
+---
+
+## Three kinds of rule set
+
+The top-level `rules.json` array can mix all three rule-set kinds. Each object is discriminated by which of these keys is present:
+
+| Key | Trigger | Has `executions`? | Page |
+|-----|---------|-------------------|------|
+| `webhook` | An inbound event whose name matches (case-insensitively). Filters and extracts from the payload. | Yes | [Webhook Rule Sets](/agent-configuration/rules/webhooks/) |
+| `schedule` + `cron` | A recurring timer. No payload — every execution runs on each tick. | Yes | [Schedule Rule Sets](/agent-configuration/rules/schedules/) |
+| `chat` | An interactive chat dispatch. Lists the plugins the chat tool may offer, plus tuning. | No | [Chat Rule Sets](/agent-configuration/rules/chat/) |
+
+`webhook`, `schedule`, and `chat` are mutually exclusive on a single rule set. This page documents the **building blocks shared across trigger types** — the trigger-specific fields (`match-any`, `use-inputs`, `cron`, `slash-command`, …) live on the pages linked above.
 
 ---
 
 ## File Structure
 
-`rules.json` is a JSON array of **rule set** objects. Each rule set is triggered either by a **webhook** (`webhook`, a case-insensitive name matched against incoming events) or by a **cron schedule** (`schedule` name + `cron` expression — see [§ 8](#8-schedule--cron--time-triggered-rule-sets)), and contains an **executions** array. Each execution is an independent pipeline: optional filters, inputs, plugins, and prompt.
+`rules.json` is a JSON array of rule-set objects. A **webhook** or **schedule** rule set contains an `executions` array; each execution is an independent pipeline: optional filters, inputs, plugins, envs, tuning, and prompt. A **chat** rule set is shaped differently — it has no `executions` and carries its tuning at the rule-set root. All three kinds can sit side by side in the same array:
 
 ```jsonc
 [
   {
-    "webhook": "...",
+    // Webhook rule set — triggered by an inbound event.
+    "webhook": "Default",
+    "with-envs": [                 // rule-set-level — merged into every execution below
+      { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": false },
+      { "name": "GITHUB-TOKEN",       "value": "secrets.GITHUB-TOKEN",       "mandatory": false },
+      { "name": "ANTHROPIC-API-KEY",  "value": "secrets.ANTHROPIC-API-KEY",  "constant": true }
+    ],
     "executions": [
       {
         "name": "...",
-        "platform": "...",
-        "repository": "...",
-        "match-any":        [ ... ],
-        "use-inputs":       [ ... ],
-        "use-plugins":      [ ... ],
-        "with-envs":        [ ... ],
-        "model":            "...",
-        "max-turns":        40,
-        "allowed-tools":    [ ... ],
-        "disallowed-tools": [ ... ],
-        "max-budget-usd":   1.00,
-        "resume-sessions":  false,
-        "conversation-key": "...",
-        "execute-prompt":   "..."
+        "platform": "...",         // shared — see below
+        "repository": "...",       // shared — see below
+        "match-any":        [ ... ],   // webhook only
+        "use-inputs":       [ ... ],   // webhook only
+        "use-plugins":      [ ... ],   // shared
+        "with-envs":        [ ... ],   // shared
+        "model":            "...",     // shared (cost & execution controls)
+        "max-turns":        40,        // shared
+        "allowed-tools":    [ ... ],   // shared
+        "disallowed-tools": [ ... ],   // shared
+        "max-budget-usd":   1.00,      // shared
+        "resume-sessions":  false,     // shared
+        "conversation-key": "...",     // shared
+        "execute-prompt":   "..."      // shared (webhook + schedule)
       }
     ]
-  }
-]
-```
-
-A `schedule` rule set replaces `webhook` / `match-any` / `use-inputs` with `cron` — there's no incoming payload to filter or extract from (see [§ 8](#8-schedule--cron--time-triggered-rule-sets)):
-
-```jsonc
-[
+  },
   {
+    // Schedule rule set — triggered by a recurring cron tick, no payload.
     "schedule": "...",
-    "cron": "*/5 * * * *",
-    "with-envs": [ ... ],
+    "cron":     "*/5 * * * *",
+    "timezone": "UTC",
+    "with-envs": [ ... ],           // commonly rule-set-level for schedules
     "executions": [
       {
-        "name": "...",
-        "platform": "...",
-        "repository": {
-          "url": "...",
-          "name": "...",
-          "ref": "..."
-        },
+        "name":       "...",
+        "platform":   "...",
+        "repository": { "url": "...", "name": "...", "ref": "..." },  // literals, no payload to resolve
         "use-plugins":    [ ... ],
-        "execute-prompt": "..."
+        "execute-prompt": "..."      // no match-any / use-inputs — nothing to filter or extract
       }
+    ]
+  },
+  {
+    // Chat rule set — no executions; plugins + tuning live at the root.
+    "chat":  "...",
+    "model": "...",                 // shared (cost & execution controls), applied to every dispatch
+    "max-turns":        40,
+    "allowed-tools":    [ ... ],
+    "disallowed-tools": [ ... ],
+    "max-budget-usd":   1.00,
+    "resume-sessions":  false,
+    "with-envs":   [ ... ],
+    "use-plugins": [
+      { "plugin-name": "...", "marketplace": "...", "slash-command": "/..." }
     ]
   }
 ]
 ```
+
+The following fields are common to every execution block regardless of trigger type. Trigger-specific fields are documented on their own pages.
 
 | Field | Description |
 |-------|-------------|
-| `webhook` | Webhook name from Xians Agent Studio (must match incoming events). Mutually exclusive with `schedule`. |
-| `schedule` | Cron rule set name — the time-triggered analogue of `webhook`, used for logs and skip messages. Mutually exclusive with `webhook`. See [§ 8](#8-schedule--cron--time-triggered-rule-sets). |
-| `cron` | Standard 5-field cron expression (`minute hour day-of-month month day-of-week`) controlling how often a `schedule` rule set's executions run. Only valid alongside `schedule`. |
-| `executions` | One or more execution blocks; optional per-block `name` for logs and skip messages |
-| `platform` *(per execution, optional)* | Hosting service the run targets (`github`, `azuredevops`, …). Structural — describes *where* the run happens, independent of the plugin. See [§ 1b](#1b-platform--repository--structural-execution-context). |
-| `repository` *(per execution, optional)* | Structural binding for the repository being operated on. Each declared sub-field (`url`, `ref`) accepts either a JSON path (resolved against the payload) or a constant via `{ "value": "...", "constant": true }`. Auto-resolved values are exposed to plugins as `{{repository-url}}` / `{{repository-name}}` / `{{git-ref}}`; **`{{repository-name}}` is derived from `url`, never authored**. Omit the whole block for executions that don't operate on a repo. See [§ 1b](#1b-platform--repository--structural-execution-context). `schedule` rule sets declare `url` / `ref` (and optionally `name`) as plain literals — see [§ 8](#8-schedule--cron--time-triggered-rule-sets). |
-| `with-envs` *(optional, per execution or per rule set)* | Container env vars injected before the prompt runs. Declare it inside an execution block (sibling to `use-plugins`) to scope it to that execution, or at the rule-set level (sibling to `executions`) to apply to **every** execution in the rule set. Each entry **must** declare its source explicitly: `secrets.KEY` (tenant Secret Vault), `host.NAME` (agent process env), or a literal with `"constant": true`. Bare names and unknown prefixes fail the activation. See [§ 5](#5-with-envs--container-environment-variables). |
-| `model` *(per execution, optional)* | Claude model this block runs on (e.g. `claude-haiku-4-5`, `claude-sonnet-4-5`). Omit to use the executor default. See [§ 7](#7-cost--execution-controls). |
-| `max-turns` *(per execution, optional)* | Hard cap on agent turns — the run aborts once this many tool-use round-trips complete. See [§ 7](#7-cost--execution-controls). |
-| `allowed-tools` *(per execution, optional)* | List of tool names auto-approved without a permission prompt. Does not restrict which tools are available; use `disallowed-tools` to block tools entirely. See [§ 7](#7-cost--execution-controls). |
-| `disallowed-tools` *(per execution, optional)* | List of tool names (or scoped patterns like `"Bash(rm *)"`) to remove from the agent's context. See [§ 7](#7-cost--execution-controls). |
-| `max-budget-usd` *(per execution, optional)* | Hard USD spend cap per run. The SDK aborts the run once this threshold is crossed. See [§ 7](#7-cost--execution-controls). |
-| `resume-sessions` *(per execution, optional)* | When `true`, back-to-back runs on the same conversation resume the prior Claude Code session. Best-effort — a missing session falls back to a fresh run. Pair with `conversation-key` to define what "the same conversation" means. See [§ 7](#7-cost--execution-controls). |
-| `conversation-key` *(per execution, optional)* | Binding that identifies the conversation for session-resume keying (e.g. `"pull_request.number"` so every run on the same PR shares one session). Same JSON-path / constant forms as the `repository` sub-fields. Only consulted when `resume-sessions` is `true`. See [§ 7](#7-cost--execution-controls). |
-
-Each execution block that passes its `match-any` filters is scheduled independently when multiple blocks match the same payload.
-
-### Evaluation Flow
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Incoming Webhook                                                    │
-│  name: "Default"   payload: { "action": "opened", ... }              │
-└───────────────────────────────┬──────────────────────────────────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  Find rule set where  │
-                    │  webhook matches      │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  For each execution:  │
-                    │  Evaluate match-any   │──── No match? → skip block
-                    │  (OR across entries)  │
-                    └───────────┬───────────┘
-                                │ At least one match-any passes
-                    ┌───────────▼───────────┐
-                    │  Extract use-inputs   │
-                    │  from payload         │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  Interpolate          │
-                    │  execute-prompt       │
-                    │  with {{input-name}}  │
-                    └───────────┬───────────┘
-                                │
-                    ┌───────────▼───────────┐
-                    │  Start executor with  │
-                    │  plugins + prompt     │
-                    └───────────────────────┘
-```
+| `executions` | One or more execution blocks; optional per-block `name` for logs and skip messages. |
+| `platform` *(per execution, optional)* | Hosting service the run targets (`github`, `azuredevops`, …). Structural — describes *where* the run happens, independent of the plugin. See [`platform` & `repository`](#platform--repository--structural-execution-context). |
+| `repository` *(per execution, optional)* | Structural binding for the repository being operated on. Auto-resolved values are exposed to plugins as `{{repository-url}}` / `{{repository-name}}` / `{{git-ref}}`; **`{{repository-name}}` is derived from `url`, never authored**. Omit the whole block for executions that don't operate on a repo. See [`platform` & `repository`](#platform--repository--structural-execution-context). |
+| `use-plugins` *(per execution)* | Claude Code marketplace plugins to install before the prompt runs. See [`use-plugins`](#use-plugins--plugin-installation). |
+| `with-envs` *(optional, per execution or per rule set)* | Container env vars injected before the prompt runs. Each entry **must** declare its source explicitly: `secrets.KEY`, `host.NAME`, or a literal with `"constant": true`. See [`with-envs`](#with-envs--container-environment-variables). |
+| `model` *(per execution, optional)* | Claude model this block runs on. Omit to use the executor default. See [Cost & Execution Controls](#cost--execution-controls). |
+| `max-turns` *(per execution, optional)* | Hard cap on agent turns. See [Cost & Execution Controls](#cost--execution-controls). |
+| `allowed-tools` *(per execution, optional)* | Tool names auto-approved without a permission prompt. See [Cost & Execution Controls](#cost--execution-controls). |
+| `disallowed-tools` *(per execution, optional)* | Tool names (or scoped patterns like `"Bash(rm *)"`) removed from the agent's context. See [Cost & Execution Controls](#cost--execution-controls). |
+| `max-budget-usd` *(per execution, optional)* | Hard USD spend cap per run. See [Cost & Execution Controls](#cost--execution-controls). |
+| `resume-sessions` *(per execution, optional)* | Resume the prior Claude Code session for the same conversation. Pair with `conversation-key`. See [Cost & Execution Controls](#cost--execution-controls). |
+| `conversation-key` *(per execution, optional)* | Binding that identifies the conversation for session-resume keying. Only consulted when `resume-sessions` is `true`. See [Cost & Execution Controls](#cost--execution-controls). |
+| `execute-prompt` *(per execution)* | Claude Code prompt template run after plugins install. See [`execute-prompt`](#execute-prompt--claude-code-prompt-template). |
 
 ---
 
-## 1. `webhook`
+## `platform` & `repository` — Structural Execution Context
 
-Case-insensitive match against the webhook name configured in Xians Agent Studio.
-
-```json
-"webhook": "Default"
-```
-
-Only one rule set per webhook name is used — the **first** matching entry in the `rules.json` array wins.
-
-For a rule set triggered on a recurring timer instead of a webhook, replace `webhook` with `schedule` + `cron` — see [§ 8](#8-schedule--cron--time-triggered-rule-sets).
-
----
-
-## 1b. `platform` & `repository` — Structural Execution Context
-
-These two execution-level fields describe **what the run operates on** — independent of which plugin is used. They sit alongside `match-any` / `use-inputs` / `use-plugins` and are resolved before any plugin runs. The framework uses them directly (credential setup, workspace volume, chat-side input resolution) **and** auto-injects the resolved values into `XIANIX_INPUTS` under canonical kebab-case keys, so plugin prompts and the executor entrypoint can read them off the same keys they always have.
+These two execution-level fields describe **what the run operates on** — independent of which plugin is used. They sit alongside the trigger-specific filters/inputs and are resolved before any plugin runs. The framework uses them directly (credential setup, workspace volume, chat-side input resolution) **and** auto-injects the resolved values into `XIANIX_INPUTS` under canonical kebab-case keys, so plugin prompts and the executor entrypoint can read them off the same keys they always have.
 
 ```json
 "platform": "github",
@@ -166,7 +144,7 @@ The bare-string form is shorthand for `{ "url": "repository.clone_url" }`. The o
 | `repository`      | string (JSON path) **or** object                                   | Either a bare JSON path for the clone URL (shorthand for `repository.url`) or an object with `url`. |
 | `repository.url`  | string (JSON path) **or** `{ value, constant }` object             | Either a JSON path that resolves to the clone URL (the common webhook-driven case) or a hard-coded literal via the constant form (see [Hard-coding the repository](#hard-coding-the-repository-constant-form)). **Mandatory when declared** — if a declared JSON path doesn't resolve, the execution block is skipped before any container starts. Exposed as `{{repository-url}}`. |
 
-> **`{{repository-name}}` is derived, not declared.** A short `owner/repo`-style identifier is computed from the resolved `repository.url` (platform-aware: GitHub, Azure DevOps `_git` URLs, etc.) and auto-injected as `{{repository-name}}`. There is no `repository.name` knob in the schema — clone URL and display name are kept in lockstep so they can never drift. If you need a different display name, pick a different clone URL. The one exception is `schedule` rule sets, which may declare `repository.name` explicitly — see [§ 8](#8-schedule--cron--time-triggered-rule-sets).
+> **`{{repository-name}}` is derived, not declared.** A short `owner/repo`-style identifier is computed from the resolved `repository.url` (platform-aware: GitHub, Azure DevOps `_git` URLs, etc.) and auto-injected as `{{repository-name}}`. There is no `repository.name` knob in the schema — clone URL and display name are kept in lockstep so they can never drift. If you need a different display name, pick a different clone URL. The one exception is `schedule` rule sets, which may declare `repository.name` explicitly — see [Schedule Rule Sets](/agent-configuration/rules/schedules/).
 
 #### Hard-coding the repository (constant form)
 
@@ -206,267 +184,7 @@ The structural fields use the **same skip-on-missing behaviour** as a `use-input
 
 ---
 
-## 2. `match-any` — Payload Filtering
-
-Inside each execution block, `match-any` is an array of filter rules evaluated with **OR logic**: the block passes if **any** entry matches. If `match-any` is omitted or empty, the block passes unconditionally.
-
-```json
-"match-any": [
-  { "name": "pr-opened-event",       "rule": "action==opened" },
-  { "name": "pr-synchronize-event",  "rule": "action==synchronize" }
-]
-```
-
-| Field  | Description |
-|--------|-------------|
-| `name` | Human-readable label (for logging and skip reasons) |
-| `rule` | A filter expression — see syntax below |
-
-### Filter Expression Syntax
-
-Each rule is a comparison of a **JSON path** against a **literal value**, optionally combined with `&&` (AND) and `||` (OR) operators:
-
-```
-<json-path> <operator> <expected-value>
-```
-
-Six operators are supported.
-
-| Operator | Meaning                                         | Case-sensitive | Missing path returns |
-|----------|-------------------------------------------------|----------------|----------------------|
-| `==`     | Equals                                          | yes | `false` |
-| `!=`     | Not equals                                      | yes | `true`  |
-| `^=`     | Starts with (string prefix match)               | no  | `false` |
-| `!^=`    | Does not start with                             | no  | `true`  |
-| `*=`     | Contains (substring match)                      | no  | `false` |
-| `!*=`    | Does not contain                                | no  | `true`  |
-
-`^=`, `!^=`, `*=`, and `!*=` only match **string** values — they never match numbers, booleans, or `null`.
-
-The text-search operators (`^=`, `!^=`, `*=`, `!*=`) match **case-insensitively** — they are meant for fuzzy human text such as `@`-mentions and message bodies (e.g. `comment.body*='@xianix'` matches `@Xianix`). Equality (`==`, `!=`) stays **case-sensitive and ordinal** because it targets structured identifiers where case is meaningful (GitHub label and branch names, enum-like statuses).
-
-Two additional **unary** operators check whether a path exists (resolves to a non-null value) without comparing against a right-hand side:
-
-| Operator | Meaning                                              | Missing path returns |
-|----------|------------------------------------------------------|----------------------|
-| `?`      | Exists — path resolves and value is not `null`       | `false`              |
-| `!?`     | Not exists — path is missing or value is `null`      | `true`               |
-
-Unary operators are appended directly to the path with no value on the right:
-
-```jsonc
-// Passes when the payload has a non-null "pull_request.title"
-"rule": "pull_request.title?"
-
-// Passes when the payload does NOT have a "pull_request.draft" field (or it is null)
-"rule": "pull_request.draft!?"
-```
-
-### Compound Expressions
-
-Multiple conditions can be combined in a single rule using `&&` (AND) and `||` (OR):
-
-| Operator | Meaning | Precedence |
-|----------|---------|------------|
-| `&&`     | AND — all conditions in the group must be true | Higher |
-| `||`     | OR — at least one group must be true           | Lower  |
-
-`||` has lower precedence than `&&`. The rule is split into OR-groups first, then each group is split into AND-conditions.
-
-```jsonc
-// Both conditions must be true
-"rule": "eventType==workitem.updated&&status==Active"
-
-// Either condition can be true
-"rule": "action==opened||action==reopened"
-
-// Mixed: (A AND B) OR (C AND D)
-"rule": "eventType==created&&status==New||eventType==updated&&status==Active"
-```
-
-### Quoted Values
-
-If the expected value contains `&&` or `||` (or you want a single-quoted literal), wrap it in **single quotes**:
-
-```jsonc
-"rule": "assignee=='some-user <user@example.com>'"
-```
-
-Quotes are optional for simple values. Both of these are equivalent:
-
-```jsonc
-"rule": "action==opened"
-"rule": "action=='opened'"
-```
-
-### JSON Paths
-
-JSON paths use dot notation to traverse the payload. Given:
-
-```json
-{ "action": "opened", "pull_request": { "draft": false } }
-```
-
-| Expression                  | Result  |
-|-----------------------------|---------|
-| `action==opened`            | `true`  |
-| `action!=closed`            | `true`  |
-| `pull_request.draft==false` | `true`  |
-| `action==closed`            | `false` |
-
-Type coercion is handled automatically — strings, numbers, booleans, and `null` are compared against the literal on the right-hand side.
-
-#### Property names that contain `.`
-
-If an object **key** contains a dot (common on Azure DevOps, e.g. `System.AssignedTo`), a plain dot-separated path would be ambiguous. Wrap **that segment** in **double quotes** so it is treated as a single property name:
-
-```
-resource.fields."System.AssignedTo".newValue
-resource.revision.fields."System.Title"
-```
-
-Inside a double-quoted segment, a **backslash** escapes the next character (for example if the key itself needed a quote).
-
-This applies to **match** rules and to **`use-inputs`** paths (see below).
-
-#### Arrays: numeric indices
-
-When the value at a path segment is a JSON **array**, a **numeric** segment selects the element at that index (zero-based):
-
-```
-items.0.id
-resource.reviewers.1.displayName
-```
-
-If the index is out of range, the path does not resolve (`==` fails; `!=` treats a missing path as not equal).
-
-#### Arrays: wildcard `*` (match rules only)
-
-For **filter rules** (`match-any`), a path segment `*` means "any element of the array at this point." The prefix before `*` must resolve to an array. The suffix is evaluated against each element until one matches (for positive operators) or none match (for negative operators).
-
-```
-resource.reviewers.*.displayName=='xianix-agent'
-```
-
-This passes if **any** reviewer object has `displayName` equal to `xianix-agent`. The wildcard works with all operators:
-
-```
-// passes if any label name starts with "hotfix/"
-labels.*.name^='hotfix/'
-
-// passes if any message in the thread contains a keyword
-comments.*.body*='needs review'
-
-// passes if any reviewer has a non-null "email" field
-resource.reviewers.*.email?
-```
-
-Only **one** `*` segment per path is supported.
-
-Wildcard `*` is **not** supported in **`use-inputs`** paths — use a fixed numeric index there if you need a specific array element.
-
-### Operator Examples
-
-**Starts with (`^=` / `!^=`)**
-
-Match a branch that follows a naming convention, or filter events from a specific bot:
-
-```jsonc
-// Trigger only for feature branches
-"rule": "pull_request.head.ref^=feature/"
-
-// Skip anything pushed by a bot account
-"rule": "sender.login!^=bot-"
-
-// Azure DevOps: source branch is a release branch
-"rule": "resource.sourceRefName^=refs/heads/release/"
-```
-
-**Contains (`*=` / `!*=`)**
-
-Match free-form text fields like commit messages, PR titles, or notification messages:
-
-```jsonc
-// Trigger when a PR title signals a breaking change
-"rule": "pull_request.title*=BREAKING"
-
-// Azure DevOps: react to specific activity messages
-"rule": "message.text*='updated the source branch'"
-"rule": "message.text*='as a reviewer'"
-
-// Skip draft descriptions that mention WIP
-"rule": "pull_request.body!*=[WIP]"
-```
-
-**Exists (`?` / `!?`)**
-
-Check whether a field is present (and non-null) in the payload — useful for optional fields that aren't always sent:
-
-```jsonc
-// Only trigger when the payload carries a pull_request object
-"rule": "action==opened&&pull_request?"
-
-// Trigger when a reviewer has been assigned (field present)
-"rule": "requested_reviewer.login?"
-
-// Skip payloads that have no body text
-"rule": "pull_request.body?"
-
-// Only match when the milestone is NOT set
-"rule": "pull_request.milestone!?"
-```
-
----
-
-## 3. `use-inputs` — Payload Extraction
-
-Extracts values from the webhook payload into named variables. They are used for `execute-prompt` interpolation and are forwarded to the executor (for example as `XIANIX_INPUTS`).
-
-> **Don't put structural context here.** `platform`, `repository-url`, and `repository-name` are declared at the [execution level](#1b-platform--repository--structural-execution-context) and auto-injected into `XIANIX_INPUTS` for you. Authoring them under `use-inputs` is unsupported — the framework uses the structural fields for credential setup, volume management, and chat-side input validation.
-
-```json
-"use-inputs": [
-  { "name": "pr-number", "value": "number",             "mandatory": true },
-  { "name": "pr-title",  "value": "pull_request.title" }
-]
-```
-
-| Field       | Description |
-|-------------|-------------|
-| `name`      | Key in the extracted dictionary |
-| `value`     | Dot-separated JSON path into the payload, **or** a literal when `constant` is `true` |
-| `constant`  | *(optional, default `false`)* When `true`, `value` is used as-is instead of resolving a path |
-| `mandatory` | *(optional, default `false`)* When `true`, the execution block is **skipped** if this input resolves to `null`, an empty string, or a whitespace-only string |
-
-When a mandatory input fails, the execution block is skipped with a clear error message listing which inputs were missing. Other execution blocks in the same rule set are still evaluated — a single missing mandatory input does not abort the entire webhook.
-
-### Path Resolution Examples
-
-Given:
-
-```json
-{
-  "number": 42,
-  "repository": { "clone_url": "https://github.com/acme/app.git", "full_name": "acme/app" },
-  "pull_request": { "title": "Fix auth bug", "head": { "ref": "fix/auth" } }
-}
-```
-
-| Input definition | Resolved value |
-|------------------|----------------|
-| `"value": "number"` | `42` |
-| `"value": "pull_request.head.ref"` | `"fix/auth"` |
-| `"value": "pull_request.title"` | `"Fix auth bug"` |
-| `"value": "high", "constant": true` | `"high"` (literal) |
-| `"value": "resource.revision.fields.\"System.Title\""` (path uses a quoted segment for a dotted key) | Azure DevOps work item `System.Title` |
-
-> Need the clone URL, repo name, or platform in your prompt? Reference `{{repository-url}}`, `{{repository-name}}`, or `{{platform}}` directly — they're auto-injected from the [structural fields](#1b-platform--repository--structural-execution-context).
-
-If a path does not resolve (missing property), the input is set to `null`. If the input is marked `"mandatory": true`, the entire execution block is skipped instead.
-
----
-
-## 4. `use-plugins` — Plugin Installation
+## `use-plugins` — Plugin Installation
 
 Declares Claude Code marketplace plugins to install in the executor container before the prompt runs.
 
@@ -483,14 +201,15 @@ Declares Claude Code marketplace plugins to install in the executor container be
 |-----------------|----------|-------------|
 | `plugin-name`   | Yes | Plugin reference in `plugin-name@marketplace-name` form, passed to `claude plugin install` |
 | `marketplace`   | No  | Marketplace source (`owner/repo`, git URL, path, or `marketplace.json` URL). Omit for the built-in Anthropic marketplace. |
+| `slash-command` | No  | The Claude Code slash command that invokes the plugin (e.g. `/pr-review`). Optional on webhook/schedule entries (those carry an `execute-prompt`); **required** on [chat](/agent-configuration/rules/chat/) entries so the supervisor knows the exact command. |
 
-> **Heads-up** — credentials a plugin needs (GitHub PAT, Azure DevOps PAT, third-party API keys) are **not** declared per-plugin. They live at the execution-block level in [`with-envs`](#5-with-envs--container-environment-variables) so a single value like `GITHUB-TOKEN` only has to be written once even when multiple plugins consume it.
+> **Heads-up** — credentials a plugin needs (GitHub PAT, Azure DevOps PAT, third-party API keys) are **not** declared per-plugin. They live at the execution-block level in [`with-envs`](#with-envs--container-environment-variables) so a single value like `GITHUB-TOKEN` only has to be written once even when multiple plugins consume it.
 
 ---
 
-## 5. `with-envs` — Container Environment Variables
+## `with-envs` — Container Environment Variables
 
-Declares environment variables to inject into the executor container before the prompt runs. It can sit at the **execution-block** level (sibling to `use-plugins`) — where every variable is available to every plugin and to the prompt itself, regardless of how many plugins consume it — or at the **rule-set** level (sibling to `executions`), where it's merged into **every** execution block in that rule set. The latter is common for `schedule` rule sets (see [§ 8](#8-schedule--cron--time-triggered-rule-sets)), where credentials are typically the same across the rule set's executions.
+Declares environment variables to inject into the executor container before the prompt runs. It can sit at the **execution-block** level (sibling to `use-plugins`) — where every variable is available to every plugin and to the prompt itself, regardless of how many plugins consume it — or at the **rule-set** level (sibling to `executions`, or sibling to `use-plugins` on a [chat](/agent-configuration/rules/chat/) rule set), where it's merged into **every** execution block in that rule set. This is a common pattern on **webhook** rule sets too — declare a tenant credential like `GITHUB-TOKEN` once at the rule-set root instead of repeating it on every execution block that needs it — and is the norm for [`schedule`](/agent-configuration/rules/schedules/) and [`chat`](/agent-configuration/rules/chat/) rule sets, where credentials are typically the same across every execution in the set.
 
 ```json
 "with-envs": [
@@ -603,6 +322,20 @@ Set `"mandatory": true` to make the executor container **fail to start** (non-re
 
 The error message lists which env vars were missing and where to set them — the tenant Secret Vault for `secrets.*` entries, or the agent host `.env` for `host.*` entries.
 
+#### Rule-set-level `with-envs`
+
+`with-envs` declared as a sibling of `executions` (rather than inside an execution block) is merged into **every** execution in the rule set. Works the same way on a **webhook** rule set — e.g. declaring `GITHUB-TOKEN` / `AZURE-DEVOPS-TOKEN` / `ANTHROPIC-API-KEY` once at the rule-set root so every execution block gets them without repeating the declaration — and is the common pattern for [`schedule`](/agent-configuration/rules/schedules/) and [`chat`](/agent-configuration/rules/chat/) rule sets, where credentials are typically the same across the set. When an execution declares its own env with the same `name`, the execution-level entry wins (first-wins dedup by name).
+
+```json
+"webhook": "Default",
+"with-envs": [
+  { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": false },
+  { "name": "GITHUB-TOKEN",       "value": "secrets.GITHUB-TOKEN",       "mandatory": false },
+  { "name": "ANTHROPIC-API-KEY",  "value": "secrets.ANTHROPIC-API-KEY",  "constant": true }
+],
+"executions": [ ... ]
+```
+
 #### Field reference
 
 | Field       | Description |
@@ -614,9 +347,9 @@ The error message lists which env vars were missing and where to set them — th
 
 ---
 
-## 6. `execute-prompt` — Claude Code Prompt Template
+## `execute-prompt` — Claude Code Prompt Template
 
-A string template run as the Claude Code prompt after plugins are installed. Use `{{input-name}}` placeholders for resolved `use-inputs` values.
+A string template run as the Claude Code prompt after plugins are installed. Use `{{input-name}}` placeholders for resolved [`use-inputs`](/agent-configuration/rules/webhooks/#3-use-inputs--payload-extraction) values and the structural placeholders (`{{repository-name}}`, `{{platform}}`, …).
 
 ```json
 "execute-prompt": "You are reviewing PR #{{pr-number}} titled \"{{pr-title}}\" in {{repository-name}}.\n\nRun /pr-review {{pr-number}} to perform the automated review."
@@ -624,11 +357,13 @@ A string template run as the Claude Code prompt after plugins are installed. Use
 
 Placeholders are replaced case-insensitively. Any `{{name}}` with no matching input is left unchanged.
 
+> `execute-prompt` applies to **webhook** and **schedule** executions. [Chat](/agent-configuration/rules/chat/) rule sets have no `execute-prompt` — the supervisor authors the prompt from the user's message as `{slash-command} {user-target}`.
+
 ---
 
-## 7. Cost & Execution Controls
+## Cost & Execution Controls
 
-Seven optional fields on every execution block let you tune cost, speed, and safety — from picking a cheaper model to hard-capping spend. All are omitted by default so existing rules work unchanged.
+Seven optional fields on every execution block let you tune cost, speed, and safety — from picking a cheaper model to hard-capping spend. All are omitted by default so existing rules work unchanged. Chat rule sets carry the same knobs at their rule-set root (see [Chat Rule Sets](/agent-configuration/rules/chat/)).
 
 ```json
 {
@@ -749,249 +484,8 @@ Independent of the per-block fields above, the executor prepares a cached orient
 
 ---
 
-## 8. `schedule` & `cron` — Time-Triggered Rule Sets
+## Next: pick a trigger
 
-A rule set doesn't have to wait for a webhook. Replace `webhook` with `schedule` (a name for logs and skip messages) and add `cron` to run the rule set's executions on a recurring timer instead:
-
-```json
-{
-  "schedule": "...",
-  "cron": "*/5 * * * *",
-  "with-envs": [ ... ],
-  "executions": [ ... ]
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `schedule` | Identifies the rule set in logs and skip messages — the cron analogue of `webhook`. |
-| `cron` | Standard 5-field cron expression (`minute hour day-of-month month day-of-week`). Controls how often **every** execution in this rule set runs. |
-
-### No payload → no `match-any` / `use-inputs`
-
-A cron tick carries no webhook payload, so executions in a `schedule` rule set:
-
-- **Omit `match-any`** — there's nothing to filter on, so every execution block in the rule set runs on every tick.
-- **Omit `use-inputs`** — there's no payload to extract values from. The structural placeholders `{{platform}}`, `{{repository-name}}`, and `{{git-ref}}` are still auto-injected and available to `execute-prompt` (see [§ 1b](#1b-platform--repository--structural-execution-context)).
-
-Everything else — `use-plugins`, `with-envs`, the [cost & execution controls](#7-cost--execution-controls) (`model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, `resume-sessions`), and `execute-prompt` — works exactly as it does in `webhook` executions.
-
-### `repository` as plain literals
-
-Without a payload, there's nothing for `repository.url` / `repository.ref` to resolve a JSON path against, so they're written as **plain literal strings** — the same effect as the [constant form](#hard-coding-the-repository-constant-form) (`{ "value": "...", "constant": true }`), just without the wrapper:
-
-```json
-"repository": {
-  "url": "https://github.com/my-org/agent-target.git",
-  "name": "my-org/agent-target",
-  "ref": "main"
-}
-```
-
-`repository.name` *(optional)* explicitly sets `{{repository-name}}`, overriding the value that would otherwise be [derived](#1b-platform--repository--structural-execution-context) from `url`.
-
-### Rule-set-level `with-envs`
-
-`with-envs` declared as a sibling of `executions` (rather than inside an execution block) is merged into every execution in the rule set — see [§ 5](#5-with-envs--container-environment-variables):
-
-```json
-"with-envs": [
-  { "name": "GITHUB-TOKEN",      "value": "secrets.GITHUB-TOKEN",      "mandatory": true },
-  { "name": "ANTHROPIC-API-KEY", "value": "secrets.ANTHROPIC-API-KEY", "mandatory": true }
-]
-```
-
-### Complete Example
-
-```json
-[
-  {
-    "schedule": "github-dependency-optimizer-schedule",
-    "cron": "*/5 * * * *",
-    "with-envs": [
-      { "name": "GITHUB-TOKEN",      "value": "secrets.GITHUB-TOKEN",      "mandatory": true },
-      { "name": "ANTHROPIC-API-KEY", "value": "secrets.ANTHROPIC-API-KEY", "mandatory": true }
-    ],
-    "executions": [
-      {
-        "name": "github-dependency-optimizer",
-        "platform": "github",
-        "repository": {
-          "url": "https://github.com/my-org/agent-target.git",
-          "name": "my-org/agent-target",
-          "ref": "main"
-        },
-        "use-plugins": [
-          {
-            "plugin-name": "dependency-optimizer@xianix-plugins-official",
-            "marketplace": "xianix-team/plugins-official"
-          }
-        ],
-        "execute-prompt": "xianix-agent is assigned for dependency health optimization. Run /dependency-optimizer to auto-scan manifests, verify licenses, and automatically open a remediation Pull Request."
-      }
-    ]
-  }
-]
-```
-
-Every 5 minutes, the agent installs `dependency-optimizer@xianix-plugins-official` into a fresh executor checked out at `my-org/agent-target` (branch `main`), injects `GITHUB-TOKEN` / `ANTHROPIC-API-KEY` from the tenant Secret Vault via the rule-set-level `with-envs`, and runs the prompt — no webhook involved.
-
----
-
-## Complete Example
-
-A webhook rule set with two executions — a Sonnet-powered PR review with a spend cap and session reuse, plus a Haiku-powered issue analysis with a turn cap — followed by a chat rule set exposing the PR reviewer to chat with its own tuning:
-
-```json
-[
-  {
-    "webhook": "Default",
-    "with-envs": [
-      { "name": "GITHUB-TOKEN", "value": "secrets.GITHUB-TOKEN", "mandatory": true }
-    ],
-    "executions": [
-      {
-        "name": "github-pull-request-review",
-        "platform": "github",
-        "repository": "repository.clone_url",
-        "match-any": [
-          { "name": "pr-opened",       "rule": "action==opened" },
-          { "name": "pr-synchronize",  "rule": "action==synchronize&&pull_request.labels.*.name=='ai-dlc/pr/pr-review'" }
-        ],
-        "use-inputs": [
-          { "name": "pr-number", "value": "number",             "mandatory": true },
-          { "name": "pr-title",  "value": "pull_request.title" }
-        ],
-        "use-plugins": [
-          {
-            "plugin-name": "pr-reviewer@xianix-plugins-official",
-            "marketplace": "xianix-team/plugins-official"
-          }
-        ],
-        "model":            "claude-sonnet-4-5",
-        "max-turns":        60,
-        "disallowed-tools": ["WebSearch", "WebFetch"],
-        "max-budget-usd":   2.50,
-        "resume-sessions":  true,
-        "conversation-key": "number",
-        "execute-prompt": "You are reviewing pull request #{{pr-number}} titled \"{{pr-title}}\" in the repository {{repository-name}}.\n\nRun /pr-review {{pr-number}} to perform the automated review. The `gh` CLI is authenticated and available if you need it directly."
-      },
-      {
-        "name": "github-issue-requirement-analysis",
-        "platform": "github",
-        "repository": "repository.clone_url",
-        "match-any": [
-          { "name": "issue-labeled", "rule": "action==labeled&&label.name=='ai-dlc/issue/analyze'" }
-        ],
-        "use-inputs": [
-          { "name": "issue-number", "value": "issue.number", "mandatory": true }
-        ],
-        "use-plugins": [
-          {
-            "plugin-name": "req-analyst@xianix-plugins-official",
-            "marketplace": "xianix-team/plugins-official"
-          }
-        ],
-        "model":     "claude-haiku-4-5",
-        "max-turns": 30,
-        "execute-prompt": "Issue #{{issue-number}} in {{repository-name}} has been assigned for requirement analysis.\n\nRun /requirement-analysis {{issue-number}} to perform the automated analysis."
-      }
-    ]
-  },
-  {
-    "chat": "chat",
-    "model": "claude-sonnet-4-5",
-    "max-budget-usd": 5.0,
-    "use-plugins": [
-      {
-        "plugin-name": "pr-reviewer@xianix-plugins-official",
-        "marketplace": "xianix-team/plugins-official"
-      }
-    ]
-  }
-]
-```
-
-### Work-item example (no repository)
-
-Executions that don't operate on a repo simply omit the `repository` block. `platform` can still be set to drive credential resolution:
-
-```json
-[
-  {
-    "webhook": "Default",
-    "executions": [
-      {
-        "name": "azuredevops-workitem-triage",
-        "platform": "azuredevops",
-        "match-any": [
-          { "name": "workitem-created", "rule": "eventType==workitem.created" }
-        ],
-        "use-inputs": [
-          { "name": "workitem-id",    "value": "resource.id",                                  "mandatory": true },
-          { "name": "workitem-title", "value": "resource.fields.\"System.Title\"" }
-        ],
-        "use-plugins": [
-          {
-            "plugin-name": "workitem-triage@xianix-plugins-official",
-            "marketplace": "xianix-team/plugins-official"
-          }
-        ],
-        "with-envs": [
-          { "name": "AZURE-DEVOPS-TOKEN", "value": "secrets.AZURE-DEVOPS-TOKEN", "mandatory": true }
-        ],
-        "execute-prompt": "Triage Azure DevOps work item #{{workitem-id}}: \"{{workitem-title}}\". Run /workitem-triage to suggest area path, iteration, and labels."
-      }
-    ]
-  }
-]
-```
-
-### Azure DevOps example: work item field with a dotted name
-
-Filter when a field whose key contains dots changes (quoted segment):
-
-```jsonc
-"rule": "eventType==workitem.updated&&resource.fields.\"System.AssignedTo\".newValue=='xianix-agent <xianix-agent@99x.io>'"
-```
-
-### Azure DevOps example: PR updated with a specific reviewer
-
-Require both the event type and the agent in the reviewers list:
-
-```jsonc
-"rule": "eventType==git.pullrequest.updated&&resource.reviewers.*.displayName=='xianix-agent'"
-```
-
-### Azure DevOps example: PR activity via `contains`
-
-Trigger on specific activity messages such as a source branch push or a reviewer being assigned:
-
-```jsonc
-// Source branch was updated
-"rule": "eventType==git.pullrequest.updated&&resource.reviewers.*.displayName=='xianix-agent'&&message.text*='updated the source branch'"
-
-// Agent was added as a reviewer
-"rule": "eventType==git.pullrequest.updated&&resource.reviewers.*.displayName=='xianix-agent'&&message.text*='as a reviewer'"
-```
-
-### Example: branch-convention filter with `starts-with`
-
-Only run the workflow for pull requests targeting a `release/` branch:
-
-```jsonc
-"rule": "action==opened&&pull_request.base.ref^=release/"
-```
-
-### What Happens at Runtime
-
-1. A webhook fires with a name that matches `webhook` (e.g. `"Default"`).
-2. For each execution block, if `match-any` is non-empty, at least one `rule` must pass.
-3. **Structural fields are resolved first** — `platform` and `repository` / `repository.url`. A bare-string `repository` is treated as a JSON path for the clone URL. JSON-path bindings are looked up against the payload; constant bindings (`{ "value": "...", "constant": true }`) are taken verbatim. If a declared *path* doesn't resolve, the block is skipped — constants never fail to resolve.
-4. `use-inputs` are resolved from the payload, and the resolved structural values are auto-injected back into the inputs dict under the canonical keys `platform` / `repository-url`. The short `repository-name` (e.g. `owner/repo`) is **derived** from `repository-url` (platform-aware: handles GitHub, Azure DevOps `_git` URLs, etc.) and injected alongside them so prompts and plugins see a single combined view.
-5. `execute-prompt` is interpolated with those inputs (including the auto-injected structural values).
-6. The agent resolves `with-envs` (literals, `host.*`, `secrets.*`) and injects them into the executor container alongside the runtime values it manages itself (`ANTHROPIC_API_KEY`, etc.).
-7. **Cost & execution controls are applied** — `model`, `max-turns`, `allowed-tools`, `disallowed-tools`, `max-budget-usd`, and `resume-sessions` are forwarded to the executor as typed env vars (`XIANIX-MODEL`, `XIANIX-MAX-TURNS`, etc.). Any field that is not set is simply not seeded, so the executor falls back to its own defaults — there is no behavioral change for existing rules that don't declare these fields.
-8. The executor installs `use-plugins`, injects a cached `CLAUDE.md` and symbol map into the worktree so the agent doesn't re-explore the codebase from scratch (skipped when the repo ships its own `CLAUDE.md`; optionally enriched with an LLM-authored architecture narrative when `EXECUTOR-CONTEXT-LLM` / `XIANIX-CONTEXT-LLM` is enabled), optionally resumes a prior session (when `resume-sessions: true`), and runs the final prompt with the configured model, turn cap, tool restrictions, and spend cap applied.
-
-For `schedule` rule sets, step 1 becomes "the `cron` expression ticks," and steps 2 and the payload half of step 4 don't apply — there's no `match-any` or `use-inputs` to evaluate. Every execution in the rule set proceeds straight to step 3 on each tick. See [§ 8](#8-schedule--cron--time-triggered-rule-sets).
+- **[Webhook Rule Sets](/agent-configuration/rules/webhooks/)** — react to inbound GitHub / Azure DevOps events: `webhook`, verification, `match-any` filtering, `use-inputs` extraction, evaluation flow, and full examples.
+- **[Schedule Rule Sets](/agent-configuration/rules/schedules/)** — run executions on a recurring `cron` timer with no payload.
+- **[Chat Rule Sets](/agent-configuration/rules/chat/)** — expose plugins to the interactive chat tool with their own tuning.

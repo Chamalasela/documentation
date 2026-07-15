@@ -12,7 +12,7 @@ On GitHub the trigger is a **label** added to the PR. On Azure DevOps it's a **t
 :::
 
 :::note[Namespace recap]
-PR-phase triggers all live under `ai-dlc/pr/*`. Status labels set by agents (`ai-dlc/status/in-progress`, `ai-dlc/status/awaiting-human`, `ai-dlc/status/blocked`) are shared with the rest of the lifecycle. See the [Marketplace Overview labels table](/official-plugins/overview/#the-shared-language-ai-dlc-labels) for the full list.
+PR-phase triggers all live under `ai-dlc/pr/*`. Status labels set by agents (`ai-dlc/status/in-progress`, `ai-dlc/status/awaiting-human`, `ai-dlc/status/blocked`) are shared with the rest of the lifecycle. See the [Marketplace Overview labels table](/miscellaneous/overview/#the-shared-language-ai-dlc-labels) for the full list.
 :::
 
 ---
@@ -355,9 +355,9 @@ For the platform-specific rule blocks (the exact `match-any` filters and `use-in
 
 ## See also
 
-- [Adoption Guide](/official-plugins/adoption-guide/) — the recommended low-friction rollout path for human-led teams.
-- [Marketplace Overview](/official-plugins/overview/) — the shared label vocabulary, contracts, scanners, and install path.
-- [Issue Lifecycle](/official-plugins/issue-lifecycle/) — the deep dive on what happens before `implementer` opens a draft PR.
+- [Adoption Guide](/miscellaneous/adoption-guide/) — the recommended low-friction rollout path for human-led teams.
+- [Marketplace Overview](/miscellaneous/overview/) — the shared label vocabulary, contracts, scanners, and install path.
+- [Issue Lifecycle](/miscellaneous/issue-lifecycle/) — the deep dive on what happens before `implementer` opens a draft PR.
 - [PR Reviewer](/official-plugins/pr-reviewer/) — the deep dive on `pr-reviewer`.
 - [Requirement Analyst](/official-plugins/req-analyst/) — the deep dive on `req-analyst` (whose AC powers `ac-verifier`).
-- [GitHub Setup](/agent-configuration/github/) and [Azure DevOps Setup](/agent-configuration/azure-devops/) — getting the webhooks wired up.
+- [GitHub Setup](/miscellaneous/github/) and [Azure DevOps Setup](/miscellaneous/azure-devops/) — getting the webhooks wired up.

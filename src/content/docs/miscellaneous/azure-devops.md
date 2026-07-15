@@ -6,7 +6,7 @@ description: Connect your Azure DevOps project to the Xianix Agent via a service
 This guide walks you through connecting your Azure DevOps project to the Xianix Agent — from inviting the agent as a team member to wiring up the Xians webhook URL so it starts receiving events automatically.
 
 :::note[Default rules]
-The agent ships with a default set of rules pre-loaded under its **Knowledge Base** in the Agent Studio. The event configuration below matches those default rules. If you want to change which events trigger the agent, you'll need to update both the service hook subscriptions here **and** the rules file — see the [Rules Configuration](./rules) guide.
+The agent ships with a default set of rules pre-loaded under its **Knowledge Base** in the Agent Studio. The event configuration below matches those default rules. If you want to change which events trigger the agent, you'll need to update both the service hook subscriptions here **and** the rules file — see the [Rules Configuration](/agent-configuration/rules) guide.
 :::
 
 :::tip[Before you begin]
@@ -67,5 +67,5 @@ To run your first end-to-end test, open a pull request and add the agent's user 
 ## Next steps
 
 - Review the ready-to-use [PR Reviewer Azure DevOps rule](/official-plugins/pr-reviewer/#azure-devops) that ships with the default agent.
-- [Configure agent rules](./rules) to customise which events the agent acts on — see the [Azure DevOps examples](./rules#azure-devops-example-work-item-field-with-a-dotted-name) for payload matching patterns specific to Azure DevOps.
+- [Configure agent rules](/agent-configuration/rules) to customise which events the agent acts on — see the [Azure DevOps examples](/agent-configuration/rules#azure-devops-example-work-item-field-with-a-dotted-name) for payload matching patterns specific to Azure DevOps.
 - Return to the [Quick Start](./quickstart) if you need a refresher on any earlier steps.

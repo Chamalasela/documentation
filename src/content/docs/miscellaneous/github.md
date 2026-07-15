@@ -6,7 +6,7 @@ description: Connect your GitHub repository to the Xianix Agent via a webhook.
 This guide walks you through connecting your GitHub repository to the Xianix Agent — from inviting the agent as a collaborator to wiring up the Xians webhook URL so it starts receiving events automatically.
 
 :::note[Default rules]
-The agent ships with a default set of rules pre-loaded under its **Knowledge Base** in the Agent Studio. The event configuration below matches those default rules. If you want to change which events trigger the agent, you'll need to update both the webhook events here **and** the rules file — see the [Rules Configuration](./rules) guide.
+The agent ships with a default set of rules pre-loaded under its **Knowledge Base** in the Agent Studio. The event configuration below matches those default rules. If you want to change which events trigger the agent, you'll need to update both the webhook events here **and** the rules file — see the [Rules Configuration](/agent-configuration/rules) guide.
 :::
 
 :::tip[Before you begin]
@@ -66,5 +66,5 @@ To run your first end-to-end test, open a pull request and request a review from
 ## Next steps
 
 - Review the ready-to-use [PR Reviewer GitHub rule](/official-plugins/pr-reviewer/#github) that ships with the default agent.
-- [Configure agent rules](./rules) to customise which events the agent acts on — see the [complete example](./rules#complete-example) in the rules reference for the full file structure.
+- [Configure agent rules](/agent-configuration/rules) to customise which events the agent acts on — see the [complete example](/agent-configuration/rules#complete-example) in the rules reference for the full file structure.
 - Return to the [Quick Start](./quickstart) if you need a refresher on any earlier steps.

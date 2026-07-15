@@ -3,7 +3,7 @@ title: Prerequisites
 description: Control plane access, a running agent, and repo admin rights — everything to have ready before you begin.
 ---
 
-Before you start the [Quick Start](../quickstart) guide, make sure the following are in place. Having these ready turns installation into a smooth, five-minute process.
+Before you start the [Quick Start](./quickstart) guide, make sure the following are in place. Having these ready turns installation into a smooth, five-minute process.
 
 | What you need | Why |
 |---|---|

@@ -47,9 +47,9 @@ Each plugin can be installed and triggered on its own. The reference pages docum
 
 | Plugin | Description |
 | --- | --- |
-| [PR Reviewer](./pr-reviewer) | Parallel code-quality, security, test, and performance review — posted straight to your PR. Powers the `pr-reviewer` agent in AI-DLC. |
-| [Requirement Analyst](./req-analyst) | Multi-phase requirement grooming: intent, domain, journeys, personas, and gap analysis. Powers the `req-analyst` agent in AI-DLC. |
-| [Incident Response](./incident-response) | AI first-responder for live incidents: deployment correlation, log and metrics analysis, mitigation suggestions, and post-mortem drafting. |
+| [PR Reviewer](/official-plugins/pr-reviewer) | Parallel code-quality, security, test, and performance review — posted straight to your PR. Powers the `pr-reviewer` agent in AI-DLC. |
+| [Requirement Analyst](/official-plugins/req-analyst) | Multi-phase requirement grooming: intent, domain, journeys, personas, and gap analysis. Powers the `req-analyst` agent in AI-DLC. |
+| [Incident Response](/official-plugins/incident-response) | AI first-responder for live incidents: deployment correlation, log and metrics analysis, mitigation suggestions, and post-mortem drafting. |
 
 ---
 
@@ -227,4 +227,4 @@ These agents can write code, open PRs, and create issues in your repository. Tre
 - [Issue Lifecycle](./issue-lifecycle) — the deep dive on the issue-phase agents.
 - [PR Lifecycle](./pr-lifecycle) — the deep dive on the PR-phase agents.
 - [Rules Configuration](/agent-configuration/rules/) — how to wire plugins to webhook events so they trigger automatically.
-- [GitHub Setup](/agent-configuration/github/) and [Azure DevOps Setup](/agent-configuration/azure-devops/) — platform-specific webhook setup.
+- [GitHub Setup](/miscellaneous/github/) and [Azure DevOps Setup](/miscellaneous/azure-devops/) — platform-specific webhook setup.

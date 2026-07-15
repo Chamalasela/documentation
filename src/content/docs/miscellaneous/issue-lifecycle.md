@@ -12,7 +12,7 @@ On GitHub the trigger is a **label** added to the issue. On Azure DevOps it's a 
 :::
 
 :::note[Namespace recap]
-Issue-phase triggers all live under `ai-dlc/issue/*`. Status labels set by agents (`ai-dlc/status/in-progress`, `ai-dlc/status/awaiting-human`, `ai-dlc/status/blocked`) are shared with the rest of the lifecycle. See the [Marketplace Overview labels table](/official-plugins/overview/#the-shared-language-ai-dlc-labels) for the full list.
+Issue-phase triggers all live under `ai-dlc/issue/*`. Status labels set by agents (`ai-dlc/status/in-progress`, `ai-dlc/status/awaiting-human`, `ai-dlc/status/blocked`) are shared with the rest of the lifecycle. See the [Marketplace Overview labels table](/miscellaneous/overview/#the-shared-language-ai-dlc-labels) for the full list.
 :::
 
 ---
@@ -69,7 +69,7 @@ flowchart TD
 
 Every arrow leaving an agent represents the agent **removing its trigger label**, **posting a structured comment** (and opening a PR or child issues, where applicable), and **adding `ai-dlc/status/awaiting-human`**. Every arrow leaving a human represents a single label/tag change.
 
-Once `implementer` opens a draft PR, the conversation moves to the **[PR Lifecycle](/official-plugins/pr-lifecycle/)** — where `pr-reviewer`, `ac-verifier`, `comment-resolver`, `test-author`, and `doc-writer` take over.
+Once `implementer` opens a draft PR, the conversation moves to the **[PR Lifecycle](/miscellaneous/pr-lifecycle/)** — where `pr-reviewer`, `ac-verifier`, `comment-resolver`, `test-author`, and `doc-writer` take over.
 
 :::note[This is the fullest path, not the default for every item]
 The diagram above shows the most structured path through issue work. Teams that want a lighter workflow often use only `bug-triager` for noisy intake, `req-analyst` for ambiguous work, or `implementer` for well-bounded tasks that are already understood.
@@ -210,7 +210,7 @@ Best used for work that crosses services, teams, or architectural boundaries. On
 #### Outputs
 
 - A **summary comment** on the issue with a link to the ADR pull request.
-- An **ADR pull request** that goes through the normal [PR Lifecycle](/official-plugins/pr-lifecycle/) — you can run `ai-dlc/pr/pr-review` on it just like any other PR.
+- An **ADR pull request** that goes through the normal [PR Lifecycle](/miscellaneous/pr-lifecycle/) — you can run `ai-dlc/pr/pr-review` on it just like any other PR.
 - Removes `ai-dlc/issue/design`, adds `ai-dlc/status/awaiting-human`.
 
 ---
@@ -269,7 +269,7 @@ This agent is best treated as a guarded option for well-bounded work. Many sophi
 #### Outputs
 
 - A **summary comment** on the issue with a link to the draft PR.
-- A **draft pull request** that hands off to the [PR Lifecycle](/official-plugins/pr-lifecycle/) — once you mark it ready, you can apply `ai-dlc/pr/pr-review`, `ai-dlc/pr/verify-ac`, and the rest.
+- A **draft pull request** that hands off to the [PR Lifecycle](/miscellaneous/pr-lifecycle/) — once you mark it ready, you can apply `ai-dlc/pr/pr-review`, `ai-dlc/pr/verify-ac`, and the rest.
 - Removes `ai-dlc/issue/implement`, adds `ai-dlc/status/awaiting-human`.
 
 ---
@@ -330,7 +330,7 @@ After an incident is resolved, drafts a postmortem pull request — timeline, ro
 #### Outputs
 
 - A **summary comment** on the incident issue with a link to the postmortem PR.
-- A **postmortem pull request** that goes through the normal [PR Lifecycle](/official-plugins/pr-lifecycle/) for review.
+- A **postmortem pull request** that goes through the normal [PR Lifecycle](/miscellaneous/pr-lifecycle/) for review.
 - Removes `ai-dlc/issue/postmortem`, adds `ai-dlc/status/awaiting-human`.
 
 ---
@@ -392,8 +392,8 @@ For the platform-specific rule blocks (the exact `match-any` filters and `use-in
 
 ## See also
 
-- [Adoption Guide](/official-plugins/adoption-guide/) — the recommended low-friction rollout path for human-led teams.
-- [Marketplace Overview](/official-plugins/overview/) — the shared label vocabulary, contracts, scanners, and install path.
-- [PR Lifecycle](/official-plugins/pr-lifecycle/) — the deep dive on what happens after `implementer` opens a draft PR.
+- [Adoption Guide](/miscellaneous/adoption-guide/) — the recommended low-friction rollout path for human-led teams.
+- [Marketplace Overview](/miscellaneous/overview/) — the shared label vocabulary, contracts, scanners, and install path.
+- [PR Lifecycle](/miscellaneous/pr-lifecycle/) — the deep dive on what happens after `implementer` opens a draft PR.
 - [Requirement Analyst](/official-plugins/req-analyst/) — the deep dive on `req-analyst`.
-- [GitHub Setup](/agent-configuration/github/) and [Azure DevOps Setup](/agent-configuration/azure-devops/) — getting the webhooks wired up.
+- [GitHub Setup](/miscellaneous/github/) and [Azure DevOps Setup](/miscellaneous/azure-devops/) — getting the webhooks wired up.

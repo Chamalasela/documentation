@@ -53,15 +53,28 @@ export default defineConfig({
 				{
 					label: 'Agent Configuration',
 					items: [
-					{ label: 'Prerequisites', slug: 'agent-configuration/prerequisites' },
-				{ label: 'Quick Start', slug: 'agent-configuration/quickstart' },
-				{ label: 'Azure DevOps Setup', slug: 'agent-configuration/azure-devops' },
-				{ label: 'GitHub Setup', slug: 'agent-configuration/github' },
-				{ label: 'Rules Configuration', slug: 'agent-configuration/rules' },
-				{ label: 'Adoption Guide', slug: 'agent-configuration/adoption-guide' },
-				{ label: 'Marketplace Overview', slug: 'agent-configuration/overview' },
-				{ label: 'Issue Lifecycle', slug: 'agent-configuration/issue-lifecycle' },
-				{ label: 'PR Lifecycle', slug: 'agent-configuration/pr-lifecycle' },
+						{ label: 'Rules Configuration', slug: 'agent-configuration/rules' },
+						{
+							label: 'Trigger Types',
+							items: [
+								{ label: 'Webhook Rule Sets', slug: 'agent-configuration/rules/webhooks' },
+								{ label: 'Schedule Rule Sets', slug: 'agent-configuration/rules/schedules' },
+								{ label: 'Chat Rule Sets', slug: 'agent-configuration/rules/chat' },
+							],
+						},
+					],
+				},
+				{
+					label: 'Miscellaneous',
+					items: [
+						{ label: 'Prerequisites', slug: 'miscellaneous/prerequisites' },
+						{ label: 'Quick Start', slug: 'miscellaneous/quickstart' },
+						{ label: 'Azure DevOps Setup', slug: 'miscellaneous/azure-devops' },
+						{ label: 'GitHub Setup', slug: 'miscellaneous/github' },
+						{ label: 'Adoption Guide', slug: 'miscellaneous/adoption-guide' },
+						{ label: 'Marketplace Overview', slug: 'miscellaneous/overview' },
+						{ label: 'Issue Lifecycle', slug: 'miscellaneous/issue-lifecycle' },
+						{ label: 'PR Lifecycle', slug: 'miscellaneous/pr-lifecycle' },
 					],
 				},
 			{

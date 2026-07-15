@@ -81,7 +81,11 @@ export default defineConfig({
 				label: 'Official Plugins',
 				items: [
 
-					{ label: 'PR Reviewer', slug: 'official-plugins/pr-reviewer' },
+					{
+						label: 'PR Reviewer',
+						link: 'https://github.com/xianix-team/plugins-official/tree/main/plugins/pr-reviewer',
+						attrs: { target: '_blank', rel: 'noopener noreferrer' },
+					},
 					{ label: 'Performance Optimizer', slug: 'official-plugins/perf-optimizer' },
 					{ label: 'PR Comment Resolver', slug: 'official-plugins/pr-comment-resolver' },
 					{ label: 'Document Updater', slug: 'official-plugins/doc-writer' },

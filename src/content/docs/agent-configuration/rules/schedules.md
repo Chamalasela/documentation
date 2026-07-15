@@ -7,6 +7,10 @@ A rule set doesn't have to wait for a webhook. Replace `webhook` with `schedule`
 
 This page covers the fields specific to the schedule trigger. The building blocks shared with webhook and chat rule sets — [`platform` & `repository`](/agent-configuration/rules/#platform--repository--structural-execution-context), [`use-plugins`](/agent-configuration/rules/#use-plugins--plugin-installation), [`with-envs`](/agent-configuration/rules/#with-envs--container-environment-variables), [`execute-prompt`](/agent-configuration/rules/#execute-prompt--claude-code-prompt-template), and [Cost & Execution Controls](/agent-configuration/rules/#cost--execution-controls) — behave exactly as they do for webhook executions. See the [parent Rules Configuration page](/agent-configuration/rules/).
 
+:::caution[Deactivate and reactivate the agent after schedule changes]
+Adding a new `schedule` rule set, or changing an existing one's `cron`, `timezone`, or any other field, does **not** take effect on its own. The scheduler only picks up schedule definitions when the agent starts, so after saving the change you must **deactivate the agent and then reactivate it** in the Xians Agent Studio for the new or updated cron trigger to start firing.
+:::
+
 ```jsonc
 [
   {
